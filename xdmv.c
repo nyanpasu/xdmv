@@ -6,7 +6,9 @@
 #include <math.h>
 
 #include <X11/Xlib.h>
-#include <X11/extensions/Xdbe.h>
+#include <X11/Xatom.h>
+#include <X11/Xmd.h>
+#include <X11/Xutil.h>
 
 #define eprintf(...) fprintf(stderr, __VA_ARGS__);
 
@@ -20,6 +22,7 @@ _dieifnull(void *p, const char *reason, int line)
     }
 }
 
+/* Time in milliseconds since epoch */
 unsigned long
 gettime()
 {
@@ -54,14 +57,13 @@ main(void)
     /* xcb_copy_area(c, wall, w, gc, 0, 0, 1080, 0, 1920, 1080); */
     XCopyArea(display, window, p, DefaultGC(display, s), 0, 0, 200, 200, 0, 0);
 
-    /* testing xdbe */
-    int count = 1;
-    XdbeScreenVisualInfo *info = XdbeGetVisualInfo(&display, &window, &count);
-    XdbeBackBuffer bbuf = XdbeAllocateBackBufferName(&display, &window, XdbeUndefined);
-
     /* select kind of events we are interested in */
     XSelectInput(display, window, ExposureMask | KeyPressMask);
     XMapWindow(display, window);
+
+    Atom xa = XInternAtom(display, "_NET_WM_STATE", False);
+    Atom xa_prop = XInternAtom(display, "_NET_WM_STATE_BELOW", False);
+    XChangeProperty(display, window, xa, XA_ATOM, 32, PropModeAppend, (unsigned char *) &xa_prop, 1);
 
     for (;;) {
         /* XNextEvent(display, &event); */
@@ -69,18 +71,24 @@ main(void)
         unsigned long start = gettime();
         double coeff = (start % 4000) / 2000.0;
         double delta = sin(M_PI * coeff) * 20;
+
         /* xcb_poly_fill_rectangle(c, w, white, 1, &rectbg); */
-        XCopyArea(display, p, bbuf, DefaultGC(display, s), 0, 0, 200, 200, 0, 0);
-        XFillRectangle(display, bbuf, DefaultGC(display, s), 30 + delta, 20, 10, 10);
-        XdbeSwapBuffers(&display, info, 1);
+        /* XCopyArea(display, p, bbuf, DefaultGC(display, s), 0, 0, 200, 200, 0, 0); */
+        /* XFillRectangle(display, bbuf, DefaultGC(display, s), 30 + delta, 20, 10, 10); */
 
-        /* if (event.type == Expose) { */
-            /* XFillRectangle(display, window, DefaultGC(display, s), 20, 20, 10, 10); */
-            /* XDrawString(display, window, DefaultGC(display, s), 50, 50, msg, strlen(msg)); */
-        /* } */
-        /* if (event.type == KeyPress) */
-        /*     break; */
+        XFillRectangle(display, window, DefaultGC(display, s), 20, 20, 10, 10);
+        if (event.type == KeyPress)
+            break;
 
+        long elapsed = gettime() - start;
+        if (elapsed < 1000/60) {
+            long remaining = 1000/60 - elapsed;
+            struct timespec rts = {
+                .tv_sec = 0,
+                .tv_nsec = remaining * 1000000
+            };
+            nanosleep(&rts, 0);
+        }
     }
 
 cleanup:

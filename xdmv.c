@@ -32,6 +32,15 @@ gettime()
 }
 
 int
+xdmv_set_prop(void)
+{
+    Atom xa = XInternAtom(display, "_NET_WM_STATE", False);
+    Atom xa_prop = XInternAtom(display, "_NET_WM_STATE_BELOW", False);
+    XChangeProperty(display, window, xa, XA_ATOM, 32, PropModeAppend, (unsigned char *) &xa_prop, 1);
+}
+
+
+int
 main(void)
 {
     Display *display;
@@ -49,33 +58,33 @@ main(void)
     int flags = CWBorderPixel | CWColormap | CWOverrideRedirect;
     XSetWindowAttributes attrs = { ParentRelative, 0L, 0, 0L, 0, 0, Always, 0L,
         0L, False, StructureNotifyMask | ExposureMask, 0L, True, 0, 0 };
-    window = XCreateWindow(display, RootWindow(display, 0), 10, 10, 200, 200,
+    window = XCreateWindow(display, RootWindow(display, 0), 10, 10, 800, 200,
             0, CopyFromParent, InputOutput, CopyFromParent, flags, &attrs);
+
+    Atom xa = XInternAtom(display, "_NET_WM_STATE", False);
+    Atom xa_prop = XInternAtom(display, "_NET_WM_STATE_BELOW", False);
+    XChangeProperty(display, window, xa, XA_ATOM, 32, PropModeAppend, (unsigned char *) &xa_prop, 1);
 
     /* select kind of events we are interested in */
     XSelectInput(display, window, ExposureMask | KeyPressMask);
     XMapWindow(display, window);
 
     /* testing pixmaps */
-    Pixmap p = XCreatePixmap(display, window, 200, 200, 24);
+    Pixmap p = XCreatePixmap(display, window, 800, 200, 24);
     /* xcb_copy_area(c, wall, w, gc, 0, 0, 1080, 0, 1920, 1080); */
-    XCopyArea(display, window, p, DefaultGC(display, s), 0, 0, 200, 200, 0, 0);
-
-    Atom xa = XInternAtom(display, "_NET_WM_STATE", False);
-    Atom xa_prop = XInternAtom(display, "_NET_WM_STATE_BELOW", False);
-    XChangeProperty(display, window, xa, XA_ATOM, 32, PropModeAppend, (unsigned char *) &xa_prop, 1);
+    XCopyArea(display, window, p, DefaultGC(display, s), 0, 0, 800, 200, 0, 0);
 
     for (;;) {
         /* XNextEvent(display, &event); */
 
         unsigned long start = gettime();
         double coeff = (start % 4000) / 2000.0;
-        double delta = sin(M_PI * coeff) * 20;
+        double delta = sin(M_PI * coeff) * 350;
 
         /* xcb_poly_fill_rectangle(c, w, white, 1, &rectbg); */
-        XCopyArea(display, p, window, DefaultGC(display, s), 0, 0, 200, 200, 0, 0);
+        XCopyArea(display, p, window, DefaultGC(display, s), 0, 0, 800, 200, 0, 0);
         XFlush(display);
-        XFillRectangle(display, window, DefaultGC(display, s), 30 + delta, 20, 10, 10);
+        XFillRectangle(display, window, DefaultGC(display, s), 400 + delta, 20, 10, 10);
 
         XFlush(display);
 

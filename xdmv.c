@@ -52,14 +52,14 @@ main(void)
     window = XCreateWindow(display, RootWindow(display, 0), 10, 10, 200, 200,
             0, CopyFromParent, InputOutput, CopyFromParent, flags, &attrs);
 
+    /* select kind of events we are interested in */
+    XSelectInput(display, window, ExposureMask | KeyPressMask);
+    XMapWindow(display, window);
+
     /* testing pixmaps */
     Pixmap p = XCreatePixmap(display, window, 200, 200, 24);
     /* xcb_copy_area(c, wall, w, gc, 0, 0, 1080, 0, 1920, 1080); */
     XCopyArea(display, window, p, DefaultGC(display, s), 0, 0, 200, 200, 0, 0);
-
-    /* select kind of events we are interested in */
-    XSelectInput(display, window, ExposureMask | KeyPressMask);
-    XMapWindow(display, window);
 
     Atom xa = XInternAtom(display, "_NET_WM_STATE", False);
     Atom xa_prop = XInternAtom(display, "_NET_WM_STATE_BELOW", False);
@@ -73,10 +73,12 @@ main(void)
         double delta = sin(M_PI * coeff) * 20;
 
         /* xcb_poly_fill_rectangle(c, w, white, 1, &rectbg); */
-        /* XCopyArea(display, p, bbuf, DefaultGC(display, s), 0, 0, 200, 200, 0, 0); */
-        /* XFillRectangle(display, bbuf, DefaultGC(display, s), 30 + delta, 20, 10, 10); */
+        XCopyArea(display, p, window, DefaultGC(display, s), 0, 0, 200, 200, 0, 0);
+        XFlush(display);
+        XFillRectangle(display, window, DefaultGC(display, s), 30 + delta, 20, 10, 10);
 
-        XFillRectangle(display, window, DefaultGC(display, s), 20, 20, 10, 10);
+        XFlush(display);
+
         if (event.type == KeyPress)
             break;
 

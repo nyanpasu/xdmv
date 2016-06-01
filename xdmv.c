@@ -32,11 +32,11 @@ gettime()
 }
 
 int
-xdmv_set_prop(void)
+xdmv_set_prop(Display *d, Window w, const char *prop, const char *atom)
 {
-    Atom xa = XInternAtom(display, "_NET_WM_STATE", False);
-    Atom xa_prop = XInternAtom(display, "_NET_WM_STATE_BELOW", False);
-    XChangeProperty(display, window, xa, XA_ATOM, 32, PropModeAppend, (unsigned char *) &xa_prop, 1);
+    Atom xa = XInternAtom(d, prop, False);
+    Atom xa_prop = XInternAtom(d, atom, False);
+    XChangeProperty(d, w, xa, XA_ATOM, 32, PropModeAppend, (unsigned char *) &xa_prop, 1);
 }
 
 
@@ -55,19 +55,20 @@ main(void)
 
     s = DefaultScreen(display);
 
-    int flags = CWBorderPixel | CWColormap | CWOverrideRedirect;
+    /* int flags = CWBorderPixel | CWColormap | CWOverrideRedirect; */
+    int flags = CWBorderPixel | CWColormap;
     XSetWindowAttributes attrs = { ParentRelative, 0L, 0, 0L, 0, 0, Always, 0L,
         0L, False, StructureNotifyMask | ExposureMask, 0L, True, 0, 0 };
-    window = XCreateWindow(display, RootWindow(display, 0), 10, 10, 800, 200,
-            0, CopyFromParent, InputOutput, CopyFromParent, flags, &attrs);
-
-    Atom xa = XInternAtom(display, "_NET_WM_STATE", False);
-    Atom xa_prop = XInternAtom(display, "_NET_WM_STATE_BELOW", False);
-    XChangeProperty(display, window, xa, XA_ATOM, 32, PropModeAppend, (unsigned char *) &xa_prop, 1);
+    /* window = XCreateWindow(display, RootWindow(display, 0), 10, 10, 800, 200, */
+    /*         0, CopyFromParent, InputOutput, CopyFromParent, flags, &attrs); */
+    window = XDefaultRootWindow(display);
 
     /* select kind of events we are interested in */
     XSelectInput(display, window, ExposureMask | KeyPressMask);
     XMapWindow(display, window);
+
+    xdmv_set_prop(display, window, "_NET_WM_WINDOW_TYPE", "_NET_WM_WINDOW_TYPE_DESKTOP");
+    xdmv_set_prop(display, window, "_NET_WM_STATE", "_NET_WM_STATE_BELOW");
 
     /* testing pixmaps */
     Pixmap p = XCreatePixmap(display, window, 800, 200, 24);
@@ -85,7 +86,6 @@ main(void)
         XCopyArea(display, p, window, DefaultGC(display, s), 0, 0, 800, 200, 0, 0);
         XFlush(display);
         XFillRectangle(display, window, DefaultGC(display, s), 400 + delta, 20, 10, 10);
-
         XFlush(display);
 
         if (event.type == KeyPress)

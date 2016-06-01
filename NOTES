@@ -1,0 +1,7 @@
+Can't get xdmv to render below other windows consistently on all X environments
+without rendering straight to the desktop window. Conky does this, so I'm
+guessing it's probably alright to do.
+
+I think I can enable double buffering on the root window, so it should be fine
+for running animations as well.
+

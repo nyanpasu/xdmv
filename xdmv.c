@@ -10,6 +10,13 @@
 #include <X11/Xmd.h>
 #include <X11/Xutil.h>
 
+/* Config */
+#define xdmv_refresh_rate 1000/60
+
+/* State */
+
+
+/* Utils */
 #define eprintf(...) fprintf(stderr, __VA_ARGS__);
 
 #define dieifnull(p, reason) _dieifnull((p), (reason), __LINE__);
@@ -17,15 +24,25 @@ void
 _dieifnull(void *p, const char *reason, int line)
 {
     if (!p) {
-        eprintf("%d: %s\n", line, reason);
+        eprintf("line %d: %s\n", line, reason);
         exit(1);
     }
 }
 
-/* Time in milliseconds since epoch */
+#define die(reason) _die((reason), __LINE__);
+void
+_die(const char *reason, int line)
+{
+    eprintf("%d: %s\n", line, reason);
+    exit(1);
+}
+
+/* Program */
+
 unsigned long
 gettime()
 {
+    /* Time in milliseconds since epoch */
     static struct timespec ts;
     clock_gettime(CLOCK_REALTIME, &ts);
     return ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
@@ -63,7 +80,7 @@ xdmv_render_test(Display *d, int s, Window w, Pixmap bg, unsigned int t)
 }
 
 int
-main(void)
+xdmv_xorg(int argc, char **argv)
 {
     Display *display;
     Window window;
@@ -96,7 +113,7 @@ main(void)
         /* if (event.type == KeyPress) */
         /*     break; */
 
-        unsigned int next = 1000/60;
+        unsigned int next = xdmv_refresh_rate;
         long elapsed = gettime() - start;
         if (elapsed < next)
             xdmv_sleep(next - elapsed);
@@ -106,4 +123,19 @@ cleanup:
     XCloseDisplay(display);
 
     return 0;
+}
+
+int
+main(int argc, char **argv)
+{
+    if (argc < 2) {
+        eprintf("Usage: %s music_file\n", *argv);
+        exit(1);
+    }
+
+    const char *fn = argv[1];
+    FILE *f = fopen(fn, "r");
+    dieifnull(f, "Could not open music file.");
+
+    return xdmv_xorg(argc, argv);
 }

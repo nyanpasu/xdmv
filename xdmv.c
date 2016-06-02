@@ -13,6 +13,8 @@
 
 /* Config */
 #define xdmv_refresh_rate 1000/60
+#define xdmv_height 200
+#define xdmv_sample_size 48000
 
 /* Utils */
 #define eprintf(...) fprintf(stderr, __VA_ARGS__);

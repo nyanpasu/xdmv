@@ -5,3 +5,7 @@ guessing it's probably alright to do.
 I think I can enable double buffering on the root window, so it should be fine
 for running animations as well.
 
+I'll have to use fftw for fourier transforms if I don't want to use my own
+implementation. Here is a good example of how to use it:
+  - https://github.com/karlstav/cava
+

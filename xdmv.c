@@ -1,3 +1,4 @@
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -13,9 +14,6 @@
 /* Config */
 #define xdmv_refresh_rate 1000/60
 
-/* State */
-
-
 /* Utils */
 #define eprintf(...) fprintf(stderr, __VA_ARGS__);
 
@@ -29,6 +27,16 @@ _dieifnull(void *p, const char *reason, int line)
     }
 }
 
+#define dieif(n, reason) _dieif((n), (reason), __LINE__);
+void
+_dieif(int n, const char *reason, int line)
+{
+    if (n) {
+        eprintf("line %d: %s\n", line, reason);
+        exit(1);
+    }
+}
+
 #define die(reason) _die((reason), __LINE__);
 void
 _die(const char *reason, int line)
@@ -36,6 +44,36 @@ _die(const char *reason, int line)
     eprintf("%d: %s\n", line, reason);
     exit(1);
 }
+
+void *
+xmalloc(size_t sz)
+{
+    void *p = malloc(sz);
+    if (!p)
+        die("Could not allocate memory");
+    
+    return p;
+}
+
+/* State */
+struct wav_header {
+    char riff[4];
+    uint32_t file_size;
+    char wave[4];
+    char fmt[4];
+    uint32_t format_size;
+    uint16_t type;
+    uint16_t channels;
+    uint32_t sample_rate;
+    uint32_t _1;
+    uint16_t _2;
+    uint16_t bits_per_sample;
+    char data[4];
+    uint32_t data_size;
+};
+
+struct wav_header xrdb_wav_header;
+void *xrdb_wav_data;
 
 /* Program */
 
@@ -126,6 +164,27 @@ cleanup:
 }
 
 int
+xdmv_loadwav(FILE *f, struct wav_header *h, void **wav_data)
+{
+    /* I don't care about endianness and do basic validation only */
+
+    int n = fread(h, 1, sizeof *h, f);
+    if (n < sizeof *h)
+        return -1;
+
+    if (strncmp(h->riff, "RIFF", 4)) return -1;
+    if (strncmp(h->wave, "WAVE", 4)) return -1;
+    if (strncmp(h->fmt, "fmt", 3))   return -1;
+    /* skip checking data marker cus it varies or something */
+
+    unsigned int sz = h->file_size - 8;
+    *wav_data = xmalloc(sz);
+    fread(*wav_data, 1, sz, f);
+
+    return 0;
+}
+
+int
 main(int argc, char **argv)
 {
     if (argc < 2) {
@@ -135,7 +194,11 @@ main(int argc, char **argv)
 
     const char *fn = argv[1];
     FILE *f = fopen(fn, "r");
-    dieifnull(f, "Could not open music file.");
+    dieifnull(f, "Could not open music file");
+    int n = xdmv_loadwav(f, &xrdb_wav_header, &xrdb_wav_data);
+    dieif(n < 0, "Could not load music file");
+    fclose(f);
 
     return xdmv_xorg(argc, argv);
 }
+

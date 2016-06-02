@@ -32,6 +32,16 @@ gettime()
 }
 
 int
+xdmv_sleep(unsigned long ms)
+{
+    static struct timespec rts;
+    rts.tv_sec = 0;
+    rts.tv_nsec = ms * 1000000;
+
+    return nanosleep(&rts, 0);
+}
+
+int
 xdmv_set_prop(Display *d, Window w, const char *prop, const char *atom)
 {
     Atom xa = XInternAtom(d, prop, False);
@@ -40,66 +50,56 @@ xdmv_set_prop(Display *d, Window w, const char *prop, const char *atom)
 }
 
 
+void
+xdmv_render_test(Display *d, int s, Window w, Pixmap bg, unsigned int t)
+{
+        double coeff = (t % 4000) / 2000.0;
+        double delta = sin(M_PI * coeff) * 350;
+
+        XCopyArea(d, bg, w, DefaultGC(d, s), 0, 0, 800, 200, 0, 0);
+        XFlush(d);
+        XFillRectangle(d, w, DefaultGC(d, s), 400 + delta, 20, 10, 10);
+        XFlush(d);
+}
+
 int
 main(void)
 {
     Display *display;
     Window window;
     XEvent event;
-    char *msg = "Hello, World!";
     int s;
 
-    /* open connection with the server */
     display = XOpenDisplay(NULL);
     dieifnull(display, "Cannot open display");
 
     s = DefaultScreen(display);
 
-    /* int flags = CWBorderPixel | CWColormap | CWOverrideRedirect; */
     int flags = CWBorderPixel | CWColormap;
     XSetWindowAttributes attrs = { ParentRelative, 0L, 0, 0L, 0, 0, Always, 0L,
         0L, False, StructureNotifyMask | ExposureMask, 0L, True, 0, 0 };
-    /* window = XCreateWindow(display, RootWindow(display, 0), 10, 10, 800, 200, */
-    /*         0, CopyFromParent, InputOutput, CopyFromParent, flags, &attrs); */
     window = XDefaultRootWindow(display);
-
     /* select kind of events we are interested in */
     XSelectInput(display, window, ExposureMask | KeyPressMask);
     XMapWindow(display, window);
-
-    xdmv_set_prop(display, window, "_NET_WM_WINDOW_TYPE", "_NET_WM_WINDOW_TYPE_DESKTOP");
-    xdmv_set_prop(display, window, "_NET_WM_STATE", "_NET_WM_STATE_BELOW");
-
     /* testing pixmaps */
-    Pixmap p = XCreatePixmap(display, window, 800, 200, 24);
-    /* xcb_copy_area(c, wall, w, gc, 0, 0, 1080, 0, 1920, 1080); */
-    XCopyArea(display, window, p, DefaultGC(display, s), 0, 0, 800, 200, 0, 0);
+    Pixmap bg = XCreatePixmap(display, window, 800, 200, 24);
+    XCopyArea(display, window, bg, DefaultGC(display, s), 0, 0, 800, 200, 0, 0);
 
     for (;;) {
         /* XNextEvent(display, &event); */
 
         unsigned long start = gettime();
-        double coeff = (start % 4000) / 2000.0;
-        double delta = sin(M_PI * coeff) * 350;
 
-        /* xcb_poly_fill_rectangle(c, w, white, 1, &rectbg); */
-        XCopyArea(display, p, window, DefaultGC(display, s), 0, 0, 800, 200, 0, 0);
-        XFlush(display);
-        XFillRectangle(display, window, DefaultGC(display, s), 400 + delta, 20, 10, 10);
-        XFlush(display);
+        xdmv_render_test(display, s, window, bg, start);
 
-        if (event.type == KeyPress)
-            break;
+        /* if (event.type == KeyPress) */
+        /*     break; */
 
+        unsigned int next = 1000/60;
         long elapsed = gettime() - start;
-        if (elapsed < 1000/60) {
-            long remaining = 1000/60 - elapsed;
-            struct timespec rts = {
-                .tv_sec = 0,
-                .tv_nsec = remaining * 1000000
-            };
-            nanosleep(&rts, 0);
-        }
+        if (elapsed < next)
+            xdmv_sleep(next - elapsed);
     }
 
 cleanup:

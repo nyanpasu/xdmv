@@ -6,10 +6,11 @@
 #include <time.h>
 #include <math.h>
 
-#include <X11/Xlib.h>
 #include <X11/Xatom.h>
+#include <X11/Xlib.h>
 #include <X11/Xmd.h>
 #include <X11/Xutil.h>
+#include <X11/extensions/Xdbe.h>
 
 #include <fftw3.h>
 
@@ -23,10 +24,10 @@
 #define xdmv_margin 2
 #define xdmv_offset_y 20
 #define xdmv_offset_x 0
-#define xdmv_box_count 40
+#define xdmv_box_count 80
 
 #define xdmv_lowest_freq 50
-#define xdmv_highest_freq 10000
+#define xdmv_highest_freq 18000
 
 /* Utils */
 #define eprintf(...) fprintf(stderr, __VA_ARGS__);
@@ -170,7 +171,7 @@ xdmv_render_test(Display *d, int s, Window w, Pixmap bg, unsigned int t)
 }
 
 float *
-separate_freq_bands(fftw_complex out[][2], int bars,
+separate_freq_bands(fftw_complex *out, int bars,
                     int *lcf, int *hcf, float *k)
 {
     /* Original source: cava */
@@ -188,7 +189,7 @@ separate_freq_bands(fftw_complex out[][2], int bars,
         // process: get peaks
         for (i = lcf[o]; i <= hcf[o]; i++) {
             //getting r of complex
-            y[i] =  pow(pow(*out[i][0], 2) + pow(*out[i][1], 2), 0.5);
+            y[i] =  pow(pow(out[i][0], 2) + pow(out[i][1], 2), 0.5);
             //adding upp band
             peak[o] += y[i];
         }
@@ -262,9 +263,6 @@ xdmv_xorg(int argc, char **argv)
 
     s = DefaultScreen(display);
 
-    int flags = CWBorderPixel | CWColormap;
-    XSetWindowAttributes attrs = { ParentRelative, 0L, 0, 0L, 0, 0, Always, 0L,
-        0L, False, StructureNotifyMask | ExposureMask, 0L, True, 0, 0 };
     window = XDefaultRootWindow(display);
     /* select kind of events we are interested in */
     XSelectInput(display, window, ExposureMask | KeyPressMask);
@@ -277,6 +275,16 @@ xdmv_xorg(int argc, char **argv)
                                                           xdmv_height,
                                                           0, 0);
 
+    /* Set up double buffering */
+    int major, minor;
+    if (!XdbeQueryExtension(display, &major, &minor)) {
+        die("Could not load double buffering extension.");
+    }
+    XdbeBackBuffer backbuffer = XdbeAllocateBackBufferName(display, window, XdbeBackground);
+    XdbeSwapInfo swapinfo = {
+        .swap_window = window,
+        .swap_action = XdbeBackground,
+    };
 
     unsigned long start = gettime(), loop_start = 0;
     for (;;) {
@@ -284,7 +292,8 @@ xdmv_xorg(int argc, char **argv)
 
         loop_start = gettime();
         /* xdmv_render_test(display, s, window, bg, loop_start - start); */
-        xdmv_render_spectrum(display, s, window, bg, loop_start - start);
+        xdmv_render_spectrum(display, s, backbuffer, bg, loop_start - start);
+        XdbeSwapBuffers(display, &swapinfo, 1);
 
         /* if (event.type == KeyPress) */
         /*     break; */
@@ -361,10 +370,6 @@ xdmv_generate_cutoff()
             if (lcf[n] <= lcf[n - 1])
                 lcf[n] = lcf[n - 1] + 1;
             hcf[n - 1] = lcf[n] - 1;
-        }
-
-        if (n != 0) {
-            printf("%d: %f -> %f (%d -> %d) \n", n, fc[n - 1], fc[n], lcf[n - 1], hcf[n - 1]);
         }
     }
 

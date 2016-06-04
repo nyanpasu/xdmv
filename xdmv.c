@@ -16,9 +16,9 @@
 #include <fftw3.h>
 
 /* Config */
-/* TODO Replace these with functions that get these values dynamically/from
- * configs */
-#define xdmv_refresh_rate 1000/120
+/* TODO replace these with functions that get these values dynamically/from
+ * files */
+#define xdmv_refresh_rate 1000/60
 #define xdmv_sample_rate 2048
 #define xdmv_height 100
 #define xdmv_width 1080
@@ -31,8 +31,18 @@
 #define xdmv_highest_freq 18000
 
 #define xdmv_smooth_passes 4
-/* Must be odd number */
+/* must be odd number */
 #define xdmv_smooth_points 3
+
+/* spectrum margin smoothing settings */
+const float spectrumHeight = xdmv_box_count / 4.5;
+const float marginDecay = 1.6; // I admittedly forget how this works but it probably shouldn't be changed from 1.6
+// margin weighting follows a polynomial slope passing through (0, minMarginWeight) and (marginSize, 1)
+const float headMargin = 7; // the size of the head margin dropoff zone
+const float tailMargin = 0; // the size of the tail margin dropoff zone
+const float minMarginWeight = 0.6; // the minimum weight applied to bars in the dropoff zone
+#define headMarginSlope ((1 - minMarginWeight) / pow(headMargin, marginDecay))
+#define tailMarginSlope ((1 - minMarginWeight) / pow(tailMargin, marginDecay))
 
 /* Utils */
 #define max(a,b) \
@@ -189,7 +199,7 @@ xdmv_render_test(Display *d, int s, Window w, Pixmap bg, unsigned int t)
 }
 
 float *
-smooth_freq_bands(float *f, int bars)
+filter_savitskysmooth(float *f, int bars)
 {
     /* Savitsky-Golay smoothing algorithm */
     static float newArr[200];
@@ -214,6 +224,23 @@ smooth_freq_bands(float *f, int bars)
     }
     return newArr;
 }
+
+float *
+filter_marginsmooth(float *f, int bars)
+{
+    static float values[200];
+    for (int i = 0; i < bars; i++) {
+        float value = f[i];
+        if (i < headMargin) {
+            value *= headMarginSlope * pow(i + 1, marginDecay) + minMarginWeight;
+        } else if (bars - i <= tailMargin) {
+            value *= tailMarginSlope * pow(bars - i, marginDecay) + minMarginWeight;
+        }
+        values[i] = value;
+    }
+    return values;
+}
+
 
 float *
 separate_freq_bands(fftw_complex *out, int bars,
@@ -248,7 +275,7 @@ separate_freq_bands(fftw_complex *out, int bars,
 void
 xdmv_render_spectrum(Display *d, int s, Window w, Pixmap bg, unsigned int t)
 {
-    size_t offset = xdmv_wav_header.sample_rate * t / 10000;
+    size_t offset = xdmv_wav_header.sample_rate * t / 1000;
     float *f;
     static double *in;
     static fftw_complex *out;
@@ -264,7 +291,8 @@ xdmv_render_spectrum(Display *d, int s, Window w, Pixmap bg, unsigned int t)
 
     fftw_execute(p);
     f = separate_freq_bands(out, xdmv_box_count, lcf, hcf, weight);
-    /* f = smooth_freq_bands(f, xdmv_box_count); */
+    f = filter_savitskysmooth(f, xdmv_box_count);
+    f = filter_marginsmooth(f, xdmv_box_count);
 
     for (int o = 0; o < xdmv_box_count; o++)
         f[o] = f[o] == 0.0 ? 1.0 : f[o];

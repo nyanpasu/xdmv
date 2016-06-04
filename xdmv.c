@@ -35,15 +35,14 @@
 #define xdmv_smooth_points 3
 
 /* filter settings */
-#define xdmv_monstercat 1.5
+#define xdmv_monstercat 2
 #define xdmv_integral 0.7
-#define xdmv_gravity 1.0
-double xdmv_weight[64] = {1.0, 1.0, 1, 1, 0.8, 0.8, 1, 0.8, 0.8, 1, 1, 0.8,
-                      1, 1, 0.8, 0.6, 0.6, 0.7, 0.8, 0.8, 0.8, 0.8, 0.8,
-                      0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8,
-                      0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8,
-                      0.7, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6,
-                      0.6, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6};
+#define xdmv_gravity 0.7
+double xdmv_weight[64] = {0.8, 0.8, 1, 1, 0.8, 0.8, 1, 0.8, 0.8, 1, 1, 0.8, 1, 1,
+    0.8, 0.6, 0.6, 0.7, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8,
+    0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8,
+    0.8, 0.7, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6,
+    0.6, 0.6, 0.6, 0.6, 0.6};
 /* spectrum margin smoothing settings */
 const float spectrumHeight = xdmv_box_count / 4.5;
 const float marginDecay = 1.6; // I admittedly forget how this works but it probably shouldn't be changed from 1.6
@@ -143,6 +142,8 @@ struct xdmv {
     Pixmap bg;
     XdbeBackBuffer backbuffer;
     XdbeSwapInfo swapinfo;
+
+    int song_length;
 } xdmv;
 
 /* Program */
@@ -348,12 +349,12 @@ xdmv_render_spectrum(Display *d, int s, Window w, Pixmap bg, unsigned int t)
 
     fftw_execute(p);
     f = separate_freq_bands(out, xdmv_box_count, lcf, hcf);
-    f = filter_freqweight(f, xdmv_box_count);
+    f = filter_monstercat(f, xdmv_box_count);
     f = filter_savitskysmooth(f, xdmv_box_count);
     f = filter_marginsmooth(f, xdmv_box_count);
-    f = filter_monstercat(f, xdmv_box_count);
     f = filter_integral(f, xdmv_box_count);
     /* f = filter_gravity(f, xdmv_box_count); */
+    f = filter_freqweight(f, xdmv_box_count);
 
     for (int o = 0; o < xdmv_box_count; o++)
         f[o] = f[o] == 0.0 ? 1.0 : f[o];
@@ -368,6 +369,14 @@ xdmv_render_spectrum(Display *d, int s, Window w, Pixmap bg, unsigned int t)
                                  height );
     }
     XFlush(d);
+}
+
+void
+xdmv_xorg_cleanup(void)
+{
+    XdbeSwapBuffers(xdmv.display, &xdmv.swapinfo, 1);
+    XFlush(xdmv.display);
+    XCloseDisplay(xdmv.display);
 }
 
 int
@@ -396,10 +405,14 @@ xdmv_xorg(int argc, char **argv)
     xdmv.swapinfo.swap_action = XdbeBackground;
 
     unsigned long start = gettime(), loop_start = 0;
+    unsigned long end = xdmv.song_length * 1000 -
+                        xdmv_sample_rate * 1000 / xdmv_wav_header.sample_rate;
     for (;;) {
         /* XNextEvent(display, &event); */
 
         loop_start = gettime();
+        if (loop_start > end)
+            break;
         /* xdmv_render_test(display, s, xdmv.backbuffer, xdmv.bg, loop_start - start); */
         xdmv_render_spectrum(display, s, xdmv.backbuffer, xdmv.bg, loop_start - start);
         XdbeSwapBuffers(display, &xdmv.swapinfo, 1);
@@ -413,15 +426,8 @@ xdmv_xorg(int argc, char **argv)
             xdmv_sleep(next - elapsed);
     }
 
+    xdmv_xorg_cleanup();
     return 0;
-}
-
-void
-xdmv_xorg_cleanup(void)
-{
-    XdbeSwapBuffers(xdmv.display, &xdmv.swapinfo, 1);
-    XFlush(xdmv.display);
-    XCloseDisplay(xdmv.display);
 }
 
 int
@@ -441,6 +447,7 @@ xdmv_loadwav(FILE *f, struct wav_header *h, void **wav_data,
 
     /* support only 16 bits for testing */
     if (h->bits_per_sample != 16)    return -1;
+    if (h->channels != 2)            return -1;
 
     /* Read until data chunk */
     struct wav_header_chunk hc;
@@ -453,6 +460,7 @@ xdmv_loadwav(FILE *f, struct wav_header *h, void **wav_data,
     }
 
     unsigned int sz = hc.size;
+    xdmv.song_length = sz * 8 / h->bits_per_sample / h->channels / h->sample_rate;
 
     *wav_data = xmalloc(sz);
     *wav_audio = *wav_data;
@@ -488,7 +496,7 @@ xdmv_init()
 
     for (int n = 0; n < bars; n++) {
         int offset = sizeof(xdmv_weight) / sizeof(*xdmv_weight) * n / bars;
-        weight[n] = pow(fc[n], 0.85) * ((double)xdmv_height / xdmv_sample_rate / 4000) * xdmv_weight[offset];
+        weight[n] = pow(fc[n], 0.6) * ((double)xdmv_height / xdmv_sample_rate / 4000) * xdmv_weight[offset];
     }
 }
 

@@ -15,10 +15,10 @@
 #include <fftw3.h>
 
 /* Config */
-#define xdmv_refresh_rate 1000/60
-#define xdmv_sample_rate 2048
 /* TODO Replace these with functions that get these values dynamically/from
  * configs */
+#define xdmv_refresh_rate 1000/120
+#define xdmv_sample_rate 2048
 #define xdmv_height 100
 #define xdmv_width 1080
 #define xdmv_margin 2
@@ -29,7 +29,16 @@
 #define xdmv_lowest_freq 50
 #define xdmv_highest_freq 18000
 
+#define xdmv_smooth_passes 4
+/* Must be odd number */
+#define xdmv_smooth_points 3
+
 /* Utils */
+#define max(a,b) \
+    ({ __typeof__ (a) _a = (a); \
+     __typeof__ (b) _b = (b); \
+     _a > _b ? _a : _b; })
+
 #define eprintf(...) fprintf(stderr, __VA_ARGS__);
 
 #define dieifnull(p, reason) _dieifnull((p), (reason), __LINE__);
@@ -102,9 +111,6 @@ struct wav_sample *xdmv_wav_audio;
 int lcf[200], hcf[200];
 float fc[200], fre[200], weight[200];
 
-/* int f[200]; */
-
-
 /* Program */
 
 unsigned long
@@ -162,12 +168,39 @@ xdmv_render_test(Display *d, int s, Window w, Pixmap bg, unsigned int t)
     double coeff = (t % 4000) / 2000.0;
     for (int x = 0; x < xdmv_box_count; x++) {
         double delta = (sin(M_PI * coeff + (double)x * M_PI * 2.0 / xdmv_box_count) + 1.0) / 2.0;
-        xdmv_render_box(d, s, w, xdmv_width / xdmv_box_count * x + xdmv_offset_x,
+        xdmv_render_box(d, s, w, (float)xdmv_width / xdmv_box_count * x + xdmv_offset_x,
                                  xdmv_offset_y,
                                  xdmv_width / xdmv_box_count - xdmv_margin,
                                  xdmv_height * delta);
     }
     XFlush(d);
+}
+
+float *
+smooth_freq_bands(float *f, int bars)
+{
+    /* Savitsky-Golay smoothing algorithm */
+    static float newArr[200];
+    static float *lastArray;
+    lastArray = f;
+    for (int pass = 0; pass < xdmv_smooth_passes; pass++) {
+        // our window is centered so this is both nL and nR
+        double sidePoints = floor(xdmv_smooth_points / 2);
+        double cn = 1 / (2 * sidePoints + 1);
+        for (int i = 0; i < sidePoints; i++) {
+            newArr[i] = lastArray[i];
+            newArr[bars - i - 1] = lastArray[bars - i - 1];
+        }
+        for (int i = sidePoints; i < bars - sidePoints; i++) {
+            int sum = 0;
+            for (int n = -sidePoints; n <= sidePoints; n++) {
+                sum += cn * lastArray[i + n] + n;
+            }
+            newArr[i] = sum;
+        }
+        lastArray = newArr;
+    }
+    return newArr;
 }
 
 float *
@@ -178,7 +211,6 @@ separate_freq_bands(fftw_complex *out, int bars,
     int o,i;
     float peak[201];
     static float f[200];
-    float y[xdmv_sample_rate / 2 + 1];
     float temp;
 
 
@@ -186,24 +218,16 @@ separate_freq_bands(fftw_complex *out, int bars,
     for (o = 0; o < bars; o++) {
         peak[o] = 0;
 
-        // process: get peaks
+        /* get peaks */
         for (i = lcf[o]; i <= hcf[o]; i++) {
-            //getting r of complex
-            y[i] =  pow(pow(out[i][0], 2) + pow(out[i][1], 2), 0.5);
-            //adding upp band
-            peak[o] += y[i];
+            peak[o] += pow(pow(out[i][0], 2) + pow(out[i][1], 2), 0.5);
         }
 
-        //getting average
-        peak[o] = peak[o] / (hcf[o]-lcf[o]+1);
-
-        //multiplying with k and adjusting to sens settings
-        /* temp = peak[o] / k[o] * sens; */
-        /* if (temp <= 200) */
-        /*     temp = 0; */
-        temp = peak[o] / fc[o];
-
-        f[o] = temp;
+        /* getting average */
+        peak[o] /= hcf[o] - lcf[o] + 1;
+        peak[o] /= fc[o];
+        peak[o] = pow(peak[o], 0.40);
+        f[o] = peak[o];
     }
 
     return f;
@@ -212,9 +236,8 @@ separate_freq_bands(fftw_complex *out, int bars,
 void
 xdmv_render_spectrum(Display *d, int s, Window w, Pixmap bg, unsigned int t)
 {
-    static float flast[200];
-    uint32_t offset = xdmv_wav_header.sample_rate * t / 1000;
-
+    size_t offset = xdmv_wav_header.sample_rate * t / 10000;
+    float *f;
     static double *in;
     static fftw_complex *out;
     static fftw_plan p;
@@ -224,13 +247,13 @@ xdmv_render_spectrum(Display *d, int s, Window w, Pixmap bg, unsigned int t)
         p = fftw_plan_dft_r2c_1d(xdmv_sample_rate, in, out, FFTW_MEASURE);
     }
 
-    for (uint32_t i = 0; i < xdmv_sample_rate; i++)
+    for (int i = 0; i < xdmv_sample_rate; i++)
         in[i] = xdmv_wav_audio[offset + i].l;
 
     fftw_execute(p);
-    float *f = separate_freq_bands(out, xdmv_box_count, lcf, hcf, weight);
+    f = separate_freq_bands(out, xdmv_box_count, lcf, hcf, weight);
+    /* f = smooth_freq_bands(f, xdmv_box_count); */
 
-    // zero values causes divided by zero segfault
     for (int o = 0; o < xdmv_box_count; o++)
         f[o] = f[o] == 0.0 ? 1.0 : f[o];
 
@@ -239,13 +262,12 @@ xdmv_render_spectrum(Display *d, int s, Window w, Pixmap bg, unsigned int t)
     XFlush(d);
 
     for (int i = 0; i < xdmv_box_count; i++) {
-        float height = abs(f[i] - flast[i]) / 100.0;
+        float height = f[i] / 100.0;
 
-        xdmv_render_box(d, s, w, xdmv_width / xdmv_box_count * i + xdmv_offset_x,
+        xdmv_render_box(d, s, w, (float)xdmv_width / xdmv_box_count * i + xdmv_offset_x,
                                  xdmv_offset_y,
                                  xdmv_width / xdmv_box_count - xdmv_margin,
-                                 xdmv_height * (height > 1.0 ? 1.0 : height) );
-        flast[i] = f[i];
+                                 xdmv_height * (height > 2.0 ? 2.0 : height) );
     }
     XFlush(d);
 }
@@ -291,7 +313,7 @@ xdmv_xorg(int argc, char **argv)
         /* XNextEvent(display, &event); */
 
         loop_start = gettime();
-        /* xdmv_render_test(display, s, window, bg, loop_start - start); */
+        /* xdmv_render_test(display, s, backbuffer, bg, loop_start - start); */
         xdmv_render_spectrum(display, s, backbuffer, bg, loop_start - start);
         XdbeSwapBuffers(display, &swapinfo, 1);
 
@@ -354,7 +376,7 @@ xdmv_generate_cutoff()
     int bars = xdmv_box_count,
         lowcf = xdmv_lowest_freq,
         highcf = xdmv_highest_freq,
-        rate = 48000,
+        rate = xdmv_wav_header.sample_rate,
         M = xdmv_sample_rate;
 
     double freqconst = log10((float)lowcf / (float)highcf)

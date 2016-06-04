@@ -12,6 +12,7 @@
 #include <X11/Xmd.h>
 #include <X11/Xutil.h>
 #include <X11/extensions/Xdbe.h>
+#include <X11/extensions/Xrandr.h>
 
 #include <fftw3.h>
 
@@ -138,6 +139,12 @@ struct xdmv {
     Window window;
     XEvent event;
     int screen;
+
+    struct output_list {
+        XRROutputInfo *info;
+        struct output_list *next;
+    } *output_list;
+    XRRScreenResources *screenresources;
 
     Pixmap bg;
     XdbeBackBuffer backbuffer;
@@ -382,9 +389,35 @@ xdmv_xorg_cleanup(void)
 int
 xdmv_xorg(int argc, char **argv)
 {
-    xdmv.display = XOpenDisplay(NULL);
+    char *display_name = NULL;
+    if (argc > 2)
+        display_name = argv[2];
+    xdmv.display = XOpenDisplay(display_name);
     dieifnull(xdmv.display, "Cannot open display");
     Display *display = xdmv.display;
+
+    int major, minor;
+    if (!XRRQueryExtension(display, &major, &minor)) {
+        die("Could not load xrandr extension.");
+    }
+
+    xdmv.screenresources =
+        XRRGetScreenResources(display, XDefaultRootWindow(display));
+    XRRScreenResources *sr = xdmv.screenresources;
+    struct output_list **ol = &xdmv.output_list;
+    *ol = xmalloc(sizeof **ol);
+    printf("%d\n", sr->noutput);
+    for (int i = 0; i < sr->noutput; i++) {
+        XRROutputInfo *info;
+        info = XRRGetOutputInfo(display, sr, sr->outputs[i]);
+        if (info->connection == RR_Connected) {
+            (*ol)->info = info;
+            (*ol)->next = xmalloc(sizeof **ol);
+            *ol = (*ol)->next;
+        }
+    }
+    *ol = NULL;
+
     xdmv.screen = DefaultScreen(display);
     xdmv.window = XDefaultRootWindow(display);
     Window window = xdmv.window;
@@ -394,8 +427,7 @@ xdmv_xorg(int argc, char **argv)
     XSelectInput(display, window, ExposureMask | KeyPressMask);
     XMapWindow(display, window);
 
-    /* Set up double buffering */
-    int major, minor;
+    /* set up double buffering */
     if (!XdbeQueryExtension(display, &major, &minor)) {
         die("Could not load double buffering extension.");
     }
@@ -404,23 +436,19 @@ xdmv_xorg(int argc, char **argv)
     xdmv.swapinfo.swap_window = window;
     xdmv.swapinfo.swap_action = XdbeBackground;
 
+    /* main render loop */
     unsigned long start = gettime(), loop_start = 0;
     unsigned long end = xdmv.song_length * 1000 -
                         xdmv_sample_rate * 1000 / xdmv_wav_header.sample_rate;
     for (;;) {
-        /* XNextEvent(display, &event); */
-
         loop_start = gettime();
-        if (loop_start > end)
+        if (loop_start - start > end)
             break;
-        /* xdmv_render_test(display, s, xdmv.backbuffer, xdmv.bg, loop_start - start); */
+
         xdmv_render_spectrum(display, s, xdmv.backbuffer, xdmv.bg, loop_start - start);
         XdbeSwapBuffers(display, &xdmv.swapinfo, 1);
 
-        /* if (event.type == KeyPress) */
-        /*     break; */
-
-        unsigned int next = 1000/xdmv_framerate;
+        unsigned int next = 1000 / xdmv_framerate;
         long elapsed = gettime() - loop_start;
         if (elapsed < next)
             xdmv_sleep(next - elapsed);
@@ -512,7 +540,7 @@ int
 main(int argc, char **argv)
 {
     if (argc < 2) {
-        eprintf("Usage: %s music_file\n", *argv);
+        eprintf("Usage: %s music_file [x display]\n", *argv);
         exit(1);
     }
 

@@ -1,3 +1,3 @@
 all:
-	cc xdmv.c -lX11 -lXext -lm -lfftw3 -o xdmv
+	cc xdmv.c -lX11 -lXext -lXrandr -lm -lfftw3 -o xdmv
 

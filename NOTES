@@ -9,3 +9,7 @@ I'll have to use fftw for fourier transforms if I don't want to use my own
 implementation. Here is a good example of how to use it:
   - https://github.com/karlstav/cava
 
+need to use xrandr to get screen size configured automatically
+
+will probably have 2 spectrums per monitor, for each channel. each spectrum is
+independent from the rest.

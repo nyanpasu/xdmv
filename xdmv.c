@@ -25,7 +25,7 @@
 #define xdmv_width 1080
 #define xdmv_margin 2
 #define xdmv_offset_y 20
-#define xdmv_offset_x 30
+#define xdmv_padding_x 10
 #define xdmv_box_size 13
 
 #define xdmv_lowest_freq 50
@@ -357,7 +357,7 @@ xdmv_spectrum_calculate(int bars)
 void
 xdmv_render_spectrum(Display *d, int s, Window w, Pixmap bg, unsigned int t, int width)
 {
-    int bars = width / xdmv_box_size;
+    int bars = (width - xdmv_padding_x * 2) / xdmv_box_size;
     xdmv_spectrum_calculate(bars);
     size_t offset = xdmv_wav_header.sample_rate * t / 1000;
     float *f;
@@ -389,7 +389,7 @@ xdmv_render_spectrum(Display *d, int s, Window w, Pixmap bg, unsigned int t, int
     for (int i = 0; i < bars; i++) {
         float height = f[i];
 
-        xdmv_render_box(d, s, w, xdmv_width / bars * i + xdmv_offset_x,
+        xdmv_render_box(d, s, w, xdmv_width / bars * i + xdmv_padding_x,
                                  xdmv_offset_y,
                                  xdmv_width / bars - xdmv_margin,
                                  height );

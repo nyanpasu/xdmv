@@ -1,3 +1,4 @@
+#include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -110,6 +111,17 @@ struct wav_sample *xdmv_wav_audio;
 
 int lcf[200], hcf[200];
 float fc[200], fre[200], weight[200];
+
+struct xdmv {
+    Display *display;
+    Window window;
+    XEvent event;
+    int screen;
+
+    Pixmap bg;
+    XdbeBackBuffer backbuffer;
+    XdbeSwapInfo swapinfo;
+} xdmv;
 
 /* Program */
 
@@ -275,23 +287,20 @@ xdmv_render_spectrum(Display *d, int s, Window w, Pixmap bg, unsigned int t)
 int
 xdmv_xorg(int argc, char **argv)
 {
-    Display *display;
-    Window window;
-    XEvent event;
-    int s;
+    xdmv.display = XOpenDisplay(NULL);
+    dieifnull(xdmv.display, "Cannot open display");
+    Display *display = xdmv.display;
+    xdmv.screen = DefaultScreen(display);
+    xdmv.window = XDefaultRootWindow(display);
+    Window window = xdmv.window;
+    int s = xdmv.screen;
 
-    display = XOpenDisplay(NULL);
-    dieifnull(display, "Cannot open display");
-
-    s = DefaultScreen(display);
-
-    window = XDefaultRootWindow(display);
     /* select kind of events we are interested in */
     XSelectInput(display, window, ExposureMask | KeyPressMask);
     XMapWindow(display, window);
     /* testing pixmaps */
-    Pixmap bg = XCreatePixmap(display, window, xdmv_width, xdmv_height, 24);
-    XCopyArea(display, window, bg, DefaultGC(display, s), xdmv_offset_x,
+    xdmv.bg = XCreatePixmap(display, window, xdmv_width, xdmv_height, 24);
+    XCopyArea(display, window, xdmv.bg, DefaultGC(display, s), xdmv_offset_x,
                                                           xdmv_offset_y,
                                                           xdmv_width,
                                                           xdmv_height,
@@ -302,20 +311,19 @@ xdmv_xorg(int argc, char **argv)
     if (!XdbeQueryExtension(display, &major, &minor)) {
         die("Could not load double buffering extension.");
     }
-    XdbeBackBuffer backbuffer = XdbeAllocateBackBufferName(display, window, XdbeBackground);
-    XdbeSwapInfo swapinfo = {
-        .swap_window = window,
-        .swap_action = XdbeBackground,
-    };
+
+    xdmv.backbuffer = XdbeAllocateBackBufferName(display, window, XdbeBackground);
+    xdmv.swapinfo.swap_window = window;
+    xdmv.swapinfo.swap_action = XdbeBackground;
 
     unsigned long start = gettime(), loop_start = 0;
     for (;;) {
         /* XNextEvent(display, &event); */
 
         loop_start = gettime();
-        /* xdmv_render_test(display, s, backbuffer, bg, loop_start - start); */
-        xdmv_render_spectrum(display, s, backbuffer, bg, loop_start - start);
-        XdbeSwapBuffers(display, &swapinfo, 1);
+        /* xdmv_render_test(display, s, xdmv.backbuffer, xdmv.bg, loop_start - start); */
+        xdmv_render_spectrum(display, s, xdmv.backbuffer, xdmv.bg, loop_start - start);
+        XdbeSwapBuffers(display, &xdmv.swapinfo, 1);
 
         /* if (event.type == KeyPress) */
         /*     break; */
@@ -326,10 +334,16 @@ xdmv_xorg(int argc, char **argv)
             xdmv_sleep(next - elapsed);
     }
 
-cleanup:
-    XCloseDisplay(display);
-
     return 0;
+}
+
+void
+xdmv_xorg_cleanup(void)
+{
+    xdmv_render_clear(xdmv.display, xdmv.screen, xdmv.window, xdmv.bg);
+    XdbeSwapBuffers(xdmv.display, &xdmv.swapinfo, 1);
+    XFlush(xdmv.display);
+    XCloseDisplay(xdmv.display);
 }
 
 int
@@ -372,7 +386,6 @@ xdmv_generate_cutoff()
 {
     /* Source: cava */
 
-    /* config */
     int bars = xdmv_box_count,
         lowcf = xdmv_lowest_freq,
         highcf = xdmv_highest_freq,
@@ -383,10 +396,10 @@ xdmv_generate_cutoff()
                        / ((float)1 / ((float)bars + (float)1) - 1);
 
     for (int n = 0; n < bars + 1; n++) {
-        fc[n] = highcf * pow(10, freqconst * (-1) + ((((float)n + 1)
-                                              / ((float)bars + 1)) * freqconst));
+        fc[n] = highcf * pow(10, freqconst * (-1)
+                + ((((float)n + 1) / ((float)bars + 1)) * freqconst));
         fre[n] = fc[n] / (rate / 2);
-        lcf[n] = fre[n] * (M /4);
+        lcf[n] = fre[n] * (M / 4);
         if (n != 0) {
             hcf[n - 1] = lcf[n] - 1;
             if (lcf[n] <= lcf[n - 1])
@@ -399,6 +412,14 @@ xdmv_generate_cutoff()
         weight[n] = pow(fc[n], 0.85) * (float)xdmv_height / xdmv_sample_rate * 4000;
 }
 
+void
+sig_handler(int sig_no)
+{
+    xdmv_xorg_cleanup();
+    signal(sig_no, SIG_DFL);
+    raise(sig_no);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -406,6 +427,9 @@ main(int argc, char **argv)
         eprintf("Usage: %s music_file\n", *argv);
         exit(1);
     }
+
+    signal(SIGINT, &sig_handler);
+    signal(SIGTERM, &sig_handler);
 
     const char *fn = argv[1];
     FILE *f = fopen(fn, "r");

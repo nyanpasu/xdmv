@@ -18,24 +18,32 @@
 /* Config */
 /* TODO replace these with functions that get these values dynamically/from
  * files */
-#define xdmv_refresh_rate 1000/60
+#define xdmv_framerate 60
 #define xdmv_sample_rate 2048
 #define xdmv_height 100
 #define xdmv_width 1080
 #define xdmv_margin 2
 #define xdmv_offset_y 20
-#define xdmv_offset_x 0
+#define xdmv_offset_x 30
 #define xdmv_box_count 80
 
 #define xdmv_lowest_freq 50
-#define xdmv_highest_freq 18000
+#define xdmv_highest_freq 22000
 
 #define xdmv_smooth_passes 4
 /* must be odd number */
 #define xdmv_smooth_points 3
 
+/* filter settings */
 #define xdmv_monstercat 1.5
-#define xdmv_integral 0.6
+#define xdmv_integral 0.7
+#define xdmv_gravity 1.0
+double xdmv_weight[64] = {1.0, 1.0, 1, 1, 0.8, 0.8, 1, 0.8, 0.8, 1, 1, 0.8,
+                      1, 1, 0.8, 0.6, 0.6, 0.7, 0.8, 0.8, 0.8, 0.8, 0.8,
+                      0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8,
+                      0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8,
+                      0.7, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6,
+                      0.6, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6};
 /* spectrum margin smoothing settings */
 const float spectrumHeight = xdmv_box_count / 4.5;
 const float marginDecay = 1.6; // I admittedly forget how this works but it probably shouldn't be changed from 1.6
@@ -121,16 +129,11 @@ struct wav_header xdmv_wav_header;
 void *xdmv_wav_data;
 struct wav_sample *xdmv_wav_audio;
 
+/* filter state */
 int lcf[200], hcf[200];
-float fc[200], fre[200], weight[200];
-float fmem[200], flast[200];
+float fc[200], fre[200], weight[200], fmem[200], flast[200], fall[200],
+      fpeak[200]; 
 
-double fweight[64] = {1.0, 1.0, 1, 1, 0.8, 0.8, 1, 0.8, 0.8, 1, 1, 0.8,
-                      1, 1, 0.8, 0.6, 0.6, 0.7, 0.8, 0.8, 0.8, 0.8, 0.8,
-                      0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8,
-                      0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8,
-                      0.7, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6,
-                      0.6, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6};
 struct xdmv {
     Display *display;
     Window window;
@@ -275,6 +278,30 @@ filter_integral(float *f, int bars)
 }
 
 float *
+filter_gravity(float *f, int bars)
+{
+    static float g = xdmv_gravity * xdmv_height / 270 * pow(60.0 / xdmv_framerate, 2.5);
+    float temp;
+
+    for (int o = 0; o < bars; o++) {
+        temp = f[o];
+
+        if (temp < flast[o]) {
+            f[o] = fpeak[o] - (g * fall[o] * fall[o]);
+            fall[o]++;
+        } else {
+            f[o] = temp;
+            fpeak[o] = f[o];
+            fall[o] = 0;
+        }
+
+        flast[o] = f[o];
+    }
+
+    return f;
+}
+
+float *
 separate_freq_bands(fftw_complex *out, int bars,
                     int *lcf, int *hcf)
 {
@@ -283,7 +310,6 @@ separate_freq_bands(fftw_complex *out, int bars,
     float peak[201];
     static float f[200];
     float temp;
-
 
     // process: separate frequency bands
     for (o = 0; o < bars; o++) {
@@ -327,6 +353,7 @@ xdmv_render_spectrum(Display *d, int s, Window w, Pixmap bg, unsigned int t)
     f = filter_marginsmooth(f, xdmv_box_count);
     f = filter_monstercat(f, xdmv_box_count);
     f = filter_integral(f, xdmv_box_count);
+    /* f = filter_gravity(f, xdmv_box_count); */
 
     for (int o = 0; o < xdmv_box_count; o++)
         f[o] = f[o] == 0.0 ? 1.0 : f[o];
@@ -357,13 +384,6 @@ xdmv_xorg(int argc, char **argv)
     /* select kind of events we are interested in */
     XSelectInput(display, window, ExposureMask | KeyPressMask);
     XMapWindow(display, window);
-    /* testing pixmaps */
-    xdmv.bg = XCreatePixmap(display, window, xdmv_width, xdmv_height, 24);
-    XCopyArea(display, window, xdmv.bg, DefaultGC(display, s), xdmv_offset_x,
-                                                          xdmv_offset_y,
-                                                          xdmv_width,
-                                                          xdmv_height,
-                                                          0, 0);
 
     /* Set up double buffering */
     int major, minor;
@@ -387,7 +407,7 @@ xdmv_xorg(int argc, char **argv)
         /* if (event.type == KeyPress) */
         /*     break; */
 
-        unsigned int next = xdmv_refresh_rate;
+        unsigned int next = 1000/xdmv_framerate;
         long elapsed = gettime() - loop_start;
         if (elapsed < next)
             xdmv_sleep(next - elapsed);
@@ -426,7 +446,7 @@ xdmv_loadwav(FILE *f, struct wav_header *h, void **wav_data,
     struct wav_header_chunk hc;
     for (;;) {
         if (fread(&hc, 1, sizeof hc, f) < 0)
-            die("Invalide wav file");
+            die("Invalid wav file");
         if (!strncmp(hc.name, "data", 4))
             break;
         fseek(f, hc.size, SEEK_CUR);
@@ -467,8 +487,8 @@ xdmv_init()
     }
 
     for (int n = 0; n < bars; n++) {
-        int offset = sizeof(fweight) / sizeof(*fweight) * n / bars;
-        weight[n] = pow(fc[n], 0.85) * ((double)xdmv_height / xdmv_sample_rate / 4000) * fweight[offset];
+        int offset = sizeof(xdmv_weight) / sizeof(*xdmv_weight) * n / bars;
+        weight[n] = pow(fc[n], 0.85) * ((double)xdmv_height / xdmv_sample_rate / 4000) * xdmv_weight[offset];
     }
 }
 

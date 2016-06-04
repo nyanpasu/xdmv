@@ -35,6 +35,7 @@
 #define xdmv_smooth_points 3
 
 #define xdmv_monstercat 1.5
+#define xdmv_integral 0.6
 /* spectrum margin smoothing settings */
 const float spectrumHeight = xdmv_box_count / 4.5;
 const float marginDecay = 1.6; // I admittedly forget how this works but it probably shouldn't be changed from 1.6
@@ -122,6 +123,7 @@ struct wav_sample *xdmv_wav_audio;
 
 int lcf[200], hcf[200];
 float fc[200], fre[200], weight[200];
+float fmem[200], flast[200];
 
 double fweight[64] = {1.0, 1.0, 1, 1, 0.8, 0.8, 1, 0.8, 0.8, 1, 1, 0.8,
                       1, 1, 0.8, 0.6, 0.6, 0.7, 0.8, 0.8, 0.8, 0.8, 0.8,
@@ -262,6 +264,17 @@ filter_monstercat(float *f, int bars)
 }
 
 float *
+filter_integral(float *f, int bars)
+{
+    for (int o = 0; o < bars; o++) {
+        fmem[o] = fmem[o] * xdmv_integral + f[o];
+        f[o] = fmem[o];
+    }
+
+    return f;
+}
+
+float *
 separate_freq_bands(fftw_complex *out, int bars,
                     int *lcf, int *hcf)
 {
@@ -313,6 +326,7 @@ xdmv_render_spectrum(Display *d, int s, Window w, Pixmap bg, unsigned int t)
     f = filter_savitskysmooth(f, xdmv_box_count);
     f = filter_marginsmooth(f, xdmv_box_count);
     f = filter_monstercat(f, xdmv_box_count);
+    f = filter_integral(f, xdmv_box_count);
 
     for (int o = 0; o < xdmv_box_count; o++)
         f[o] = f[o] == 0.0 ? 1.0 : f[o];

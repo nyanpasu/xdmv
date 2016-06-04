@@ -34,6 +34,7 @@
 /* must be odd number */
 #define xdmv_smooth_points 3
 
+#define xdmv_monstercat 1.5
 /* spectrum margin smoothing settings */
 const float spectrumHeight = xdmv_box_count / 4.5;
 const float marginDecay = 1.6; // I admittedly forget how this works but it probably shouldn't be changed from 1.6
@@ -122,6 +123,12 @@ struct wav_sample *xdmv_wav_audio;
 int lcf[200], hcf[200];
 float fc[200], fre[200], weight[200];
 
+double fweight[64] = {1.0, 1.0, 1, 1, 0.8, 0.8, 1, 0.8, 0.8, 1, 1, 0.8,
+                      1, 1, 0.8, 0.6, 0.6, 0.7, 0.8, 0.8, 0.8, 0.8, 0.8,
+                      0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8,
+                      0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8,
+                      0.7, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6,
+                      0.6, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6};
 struct xdmv {
     Display *display;
     Window window;
@@ -172,25 +179,12 @@ xdmv_render_box(Display *d, int s, Window win, int x, int y, int w, int h)
 }
 
 void
-xdmv_render_clear(Display *d, int s, Window w, Pixmap bg)
-{
-    XCopyArea(d, bg, w, DefaultGC(d, s), 0, 0, xdmv_width,
-                                               xdmv_height,
-                                               xdmv_offset_x,
-                                               xdmv_offset_y);
-    XFlush(d);
-}
-
-
-void
 xdmv_render_test(Display *d, int s, Window w, Pixmap bg, unsigned int t)
 {
-    xdmv_render_clear(d, s, w, bg);
-
     double coeff = (t % 4000) / 2000.0;
     for (int x = 0; x < xdmv_box_count; x++) {
         double delta = (sin(M_PI * coeff + (double)x * M_PI * 2.0 / xdmv_box_count) + 1.0) / 2.0;
-        xdmv_render_box(d, s, w, (float)xdmv_width / xdmv_box_count * x + xdmv_offset_x,
+        xdmv_render_box(d, s, w, xdmv_width / xdmv_box_count * x + xdmv_offset_x,
                                  xdmv_offset_y,
                                  xdmv_width / xdmv_box_count - xdmv_margin,
                                  xdmv_height * delta);
@@ -241,10 +235,35 @@ filter_marginsmooth(float *f, int bars)
     return values;
 }
 
+float *
+filter_freqweight(float *f, int bars)
+{
+    for (int i = 0; i < bars; i++)
+        f[i] *= weight[i];
+    return f;
+}
+
+float *
+filter_monstercat(float *f, int bars)
+{
+    int y, z, de;
+    for (z = 0; z < bars; z++) {
+        if (f[z] < 0.125)f[z] = 0.125;
+        for (y = z - 1; y >= 0; y--) {
+            de = z - y;
+            f[y] = max(f[z] / pow(xdmv_monstercat, de), f[y]);
+        }
+        for (y = z + 1; y < bars; y++) {
+            de = y - z;
+            f[y] = max(f[z] / pow(xdmv_monstercat, de), f[y]);
+        }
+    }
+    return f;
+}
 
 float *
 separate_freq_bands(fftw_complex *out, int bars,
-                    int *lcf, int *hcf, float *k)
+                    int *lcf, int *hcf)
 {
     /* Original source: cava */
     int o,i;
@@ -264,8 +283,7 @@ separate_freq_bands(fftw_complex *out, int bars,
 
         /* getting average */
         peak[o] /= hcf[o] - lcf[o] + 1;
-        peak[o] /= fc[o];
-        peak[o] = pow(peak[o], 0.40);
+        peak[o] = pow(peak[o], 0.7);
         f[o] = peak[o];
     }
 
@@ -290,24 +308,23 @@ xdmv_render_spectrum(Display *d, int s, Window w, Pixmap bg, unsigned int t)
         in[i] = xdmv_wav_audio[offset + i].l;
 
     fftw_execute(p);
-    f = separate_freq_bands(out, xdmv_box_count, lcf, hcf, weight);
+    f = separate_freq_bands(out, xdmv_box_count, lcf, hcf);
+    f = filter_freqweight(f, xdmv_box_count);
     f = filter_savitskysmooth(f, xdmv_box_count);
     f = filter_marginsmooth(f, xdmv_box_count);
+    f = filter_monstercat(f, xdmv_box_count);
 
     for (int o = 0; o < xdmv_box_count; o++)
         f[o] = f[o] == 0.0 ? 1.0 : f[o];
 
     /* Render */
-    xdmv_render_clear(d, s, w, bg);
-    XFlush(d);
-
     for (int i = 0; i < xdmv_box_count; i++) {
-        float height = f[i] / 100.0;
+        float height = f[i];
 
-        xdmv_render_box(d, s, w, (float)xdmv_width / xdmv_box_count * i + xdmv_offset_x,
+        xdmv_render_box(d, s, w, xdmv_width / xdmv_box_count * i + xdmv_offset_x,
                                  xdmv_offset_y,
                                  xdmv_width / xdmv_box_count - xdmv_margin,
-                                 xdmv_height * (height > 2.0 ? 2.0 : height) );
+                                 height );
     }
     XFlush(d);
 }
@@ -368,7 +385,6 @@ xdmv_xorg(int argc, char **argv)
 void
 xdmv_xorg_cleanup(void)
 {
-    xdmv_render_clear(xdmv.display, xdmv.screen, xdmv.window, xdmv.bg);
     XdbeSwapBuffers(xdmv.display, &xdmv.swapinfo, 1);
     XFlush(xdmv.display);
     XCloseDisplay(xdmv.display);
@@ -410,7 +426,7 @@ xdmv_loadwav(FILE *f, struct wav_header *h, void **wav_data,
 }
 
 void
-xdmv_generate_cutoff()
+xdmv_init()
 {
     /* Source: cava */
 
@@ -436,8 +452,10 @@ xdmv_generate_cutoff()
         }
     }
 
-    for (int n = 0; n < bars; n++)
-        weight[n] = pow(fc[n], 0.85) * (float)xdmv_height / xdmv_sample_rate * 4000;
+    for (int n = 0; n < bars; n++) {
+        int offset = sizeof(fweight) / sizeof(*fweight) * n / bars;
+        weight[n] = pow(fc[n], 0.85) * ((double)xdmv_height / xdmv_sample_rate / 4000) * fweight[offset];
+    }
 }
 
 void
@@ -466,7 +484,7 @@ main(int argc, char **argv)
     dieif(n < 0, "Could not load music file");
     fclose(f);
 
-    xdmv_generate_cutoff();
+    xdmv_init();
 
     return xdmv_xorg(argc, argv);
 }

@@ -11,6 +11,8 @@
 #include <X11/Xmd.h>
 #include <X11/Xutil.h>
 
+#include <fftw3.h>
+
 /* Config */
 #define xdmv_refresh_rate 1000/60
 #define xdmv_sample_size 48000
@@ -81,8 +83,14 @@ struct wav_header {
     uint32_t data_size;
 };
 
+struct wav_sample {
+    uint16_t l;
+    uint16_t r;
+};
+
 struct wav_header xrdb_wav_header;
 void *xrdb_wav_data;
+struct wav_sample *xrdb_wav_audio;
 
 /* Program */
 
@@ -122,25 +130,55 @@ xdmv_render_box(Display *d, int s, Window win, int x, int y, int w, int h)
     XFillRectangle(d, win, DefaultGC(d, s), x, y, w, h);
 }
 
+/* fftw_complex * */
+/* xdmv_generate_spectrum() */
+/* { */
+/*      static fftw_complex *in, *out; */
+/*      static fftw_plan p; */
+/*      if (!in && !out) { */
+/*          in = (fftw_complex*) fftw_malloc(sizeof(fftw_complex) * xdmv_sample_size); */
+/*          out = (fftw_complex*) fftw_malloc(sizeof(fftw_complex) * xdmv_sample_size); */
+/*          p = fftw_plan_dft_1d(N, in, out, FFTW_FORWARD, FFTW_ESTIMATE); */
+/*      } */
+
+/*      fftw_execute(p); */
+/*      return out; */
+
+     /* fftw_destroy_plan(p); */
+     /* fftw_free(in); fftw_free(out); */
+/* } */
+
+void
+xdmv_render_clear(Display *d, int s, Window w, Pixmap bg)
+{
+    XCopyArea(d, bg, w, DefaultGC(d, s), 0, 0, xdmv_width,
+                                               xdmv_height,
+                                               xdmv_offset_x,
+                                               xdmv_offset_y);
+    XFlush(d);
+}
+
+
 void
 xdmv_render_test(Display *d, int s, Window w, Pixmap bg, unsigned int t)
 {
-        double coeff = (t % 4000) / 2000.0;
+    xdmv_render_clear(d, s, w, bg);
 
-        XCopyArea(d, bg, w, DefaultGC(d, s), 0, 0, xdmv_width,
-                                                   xdmv_height,
-                                                   xdmv_offset_x,
-                                                   xdmv_offset_y);
-        XFlush(d);
+    double coeff = (t % 4000) / 2000.0;
+    for (int x = 0; x < xdmv_box_count; x++) {
+        double delta = (sin(M_PI * coeff + (double)x * M_PI * 2.0 / xdmv_box_count) + 1.0) / 2.0;
+        xdmv_render_box(d, s, w, xdmv_width / xdmv_box_count * x + xdmv_offset_x,
+                                 xdmv_offset_y,
+                                 xdmv_width / xdmv_box_count - xdmv_margin,
+                                 xdmv_height * delta);
+    }
+    XFlush(d);
+}
 
-        for (int x = 0; x < xdmv_box_count; x++) {
-            double delta = (sin(M_PI * coeff + (double)x * M_PI * 2.0 / xdmv_box_count) + 1.0) / 2.0;
-            xdmv_render_box(d, s, w, xdmv_width / xdmv_box_count * x + xdmv_offset_x,
-                                     xdmv_offset_y,
-                                     xdmv_width / xdmv_box_count - xdmv_margin,
-                                     xdmv_height * delta);
-        }
-        XFlush(d);
+void
+xdmv_render_spectrum(Display *d, int s, Window w, Pixmap bg, unsigned int t)
+{
+    xdmv_render_clear(d, s, w, bg);
 }
 
 int
@@ -194,7 +232,8 @@ cleanup:
 }
 
 int
-xdmv_loadwav(FILE *f, struct wav_header *h, void **wav_data)
+xdmv_loadwav(FILE *f, struct wav_header *h, void **wav_data,
+             struct wav_sample **wav_audio)
 {
     /* I don't care about endianness and do basic validation only */
 
@@ -207,11 +246,14 @@ xdmv_loadwav(FILE *f, struct wav_header *h, void **wav_data)
     if (strncmp(h->fmt, "fmt", 3))   return -1;
     /* skip checking data marker cus it varies or something */
 
-    unsigned int sz = h->file_size - 8;
-    *wav_data = xmalloc(sz);
-    fread(*wav_data, 1, sz, f);
+    /* support only 16 bits for testing */
+    if (h->bits_per_sample != 16)    return -1;
 
-    return 0;
+    unsigned int sz = h->file_size - 8;
+
+    *wav_data = xmalloc(sz);
+    *wav_audio = *wav_data + h->data_size;
+    return fread(*wav_data, 1, sz, f);
 }
 
 int
@@ -225,7 +267,7 @@ main(int argc, char **argv)
     const char *fn = argv[1];
     FILE *f = fopen(fn, "r");
     dieifnull(f, "Could not open music file");
-    int n = xdmv_loadwav(f, &xrdb_wav_header, &xrdb_wav_data);
+    int n = xdmv_loadwav(f, &xrdb_wav_header, &xrdb_wav_data, &xrdb_wav_audio);
     dieif(n < 0, "Could not load music file");
     fclose(f);
 

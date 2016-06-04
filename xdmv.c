@@ -26,7 +26,7 @@
 #define xdmv_margin 2
 #define xdmv_offset_y 20
 #define xdmv_offset_x 30
-#define xdmv_box_count 80
+#define xdmv_box_size 13
 
 #define xdmv_lowest_freq 50
 #define xdmv_highest_freq 22000
@@ -45,7 +45,6 @@ double xdmv_weight[64] = {0.8, 0.8, 1, 1, 0.8, 0.8, 1, 0.8, 0.8, 1, 1, 0.8, 1, 1
     0.8, 0.7, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6,
     0.6, 0.6, 0.6, 0.6, 0.6};
 /* spectrum margin smoothing settings */
-const float spectrumHeight = xdmv_box_count / 4.5;
 const float marginDecay = 1.6; // I admittedly forget how this works but it probably shouldn't be changed from 1.6
 // margin weighting follows a polynomial slope passing through (0, minMarginWeight) and (marginSize, 1)
 const float headMargin = 7; // the size of the head margin dropoff zone
@@ -191,20 +190,6 @@ xdmv_render_box(Display *d, int s, Window win, int x, int y, int w, int h)
     XFillRectangle(d, win, DefaultGC(d, s), x, y, w, h);
 }
 
-void
-xdmv_render_test(Display *d, int s, Window w, Pixmap bg, unsigned int t)
-{
-    double coeff = (t % 4000) / 2000.0;
-    for (int x = 0; x < xdmv_box_count; x++) {
-        double delta = (sin(M_PI * coeff + (double)x * M_PI * 2.0 / xdmv_box_count) + 1.0) / 2.0;
-        xdmv_render_box(d, s, w, xdmv_width / xdmv_box_count * x + xdmv_offset_x,
-                                 xdmv_offset_y,
-                                 xdmv_width / xdmv_box_count - xdmv_margin,
-                                 xdmv_height * delta);
-    }
-    XFlush(d);
-}
-
 float *
 filter_savitskysmooth(float *f, int bars)
 {
@@ -338,8 +323,42 @@ separate_freq_bands(fftw_complex *out, int bars,
 }
 
 void
-xdmv_render_spectrum(Display *d, int s, Window w, Pixmap bg, unsigned int t)
+xdmv_spectrum_calculate(int bars)
 {
+    /* Source: cava */
+
+    int lowcf = xdmv_lowest_freq,
+        highcf = xdmv_highest_freq,
+        rate = xdmv_wav_header.sample_rate,
+        M = xdmv_sample_rate;
+
+    double freqconst = log10((float)lowcf / (float)highcf)
+                       / ((float)1 / ((float)bars + (float)1) - 1);
+
+    for (int n = 0; n < bars + 1; n++) {
+        fc[n] = highcf * pow(10, freqconst * (-1)
+                + ((((float)n + 1) / ((float)bars + 1)) * freqconst));
+        fre[n] = fc[n] / (rate / 2);
+        lcf[n] = fre[n] * (M / 4);
+        if (n != 0) {
+            hcf[n - 1] = lcf[n] - 1;
+            if (lcf[n] <= lcf[n - 1])
+                lcf[n] = lcf[n - 1] + 1;
+            hcf[n - 1] = lcf[n] - 1;
+        }
+    }
+
+    for (int n = 0; n < bars; n++) {
+        int offset = sizeof(xdmv_weight) / sizeof(*xdmv_weight) * n / bars;
+        weight[n] = pow(fc[n], 0.6) * ((double)xdmv_height / xdmv_sample_rate / 4000) * xdmv_weight[offset];
+    }
+}
+
+void
+xdmv_render_spectrum(Display *d, int s, Window w, Pixmap bg, unsigned int t, int width)
+{
+    int bars = width / xdmv_box_size;
+    xdmv_spectrum_calculate(bars);
     size_t offset = xdmv_wav_header.sample_rate * t / 1000;
     float *f;
     static double *in;
@@ -355,24 +374,24 @@ xdmv_render_spectrum(Display *d, int s, Window w, Pixmap bg, unsigned int t)
         in[i] = xdmv_wav_audio[offset + i].l;
 
     fftw_execute(p);
-    f = separate_freq_bands(out, xdmv_box_count, lcf, hcf);
-    f = filter_monstercat(f, xdmv_box_count);
-    f = filter_savitskysmooth(f, xdmv_box_count);
-    f = filter_marginsmooth(f, xdmv_box_count);
-    f = filter_integral(f, xdmv_box_count);
-    /* f = filter_gravity(f, xdmv_box_count); */
-    f = filter_freqweight(f, xdmv_box_count);
+    f = separate_freq_bands(out, bars, lcf, hcf);
+    f = filter_monstercat(f, bars);
+    f = filter_savitskysmooth(f, bars);
+    f = filter_marginsmooth(f, bars);
+    f = filter_integral(f, bars);
+    /* f = filter_gravity(f, bars); */
+    f = filter_freqweight(f, bars);
 
-    for (int o = 0; o < xdmv_box_count; o++)
+    for (int o = 0; o < bars; o++)
         f[o] = f[o] == 0.0 ? 1.0 : f[o];
 
     /* Render */
-    for (int i = 0; i < xdmv_box_count; i++) {
+    for (int i = 0; i < bars; i++) {
         float height = f[i];
 
-        xdmv_render_box(d, s, w, xdmv_width / xdmv_box_count * i + xdmv_offset_x,
+        xdmv_render_box(d, s, w, xdmv_width / bars * i + xdmv_offset_x,
                                  xdmv_offset_y,
-                                 xdmv_width / xdmv_box_count - xdmv_margin,
+                                 xdmv_width / bars - xdmv_margin,
                                  height );
     }
     XFlush(d);
@@ -445,7 +464,7 @@ xdmv_xorg(int argc, char **argv)
         if (loop_start - start > end)
             break;
 
-        xdmv_render_spectrum(display, s, xdmv.backbuffer, xdmv.bg, loop_start - start);
+        xdmv_render_spectrum(display, s, xdmv.backbuffer, xdmv.bg, loop_start - start, xdmv_width);
         XdbeSwapBuffers(display, &xdmv.swapinfo, 1);
 
         unsigned int next = 1000 / xdmv_framerate;
@@ -496,39 +515,6 @@ xdmv_loadwav(FILE *f, struct wav_header *h, void **wav_data,
 }
 
 void
-xdmv_init()
-{
-    /* Source: cava */
-
-    int bars = xdmv_box_count,
-        lowcf = xdmv_lowest_freq,
-        highcf = xdmv_highest_freq,
-        rate = xdmv_wav_header.sample_rate,
-        M = xdmv_sample_rate;
-
-    double freqconst = log10((float)lowcf / (float)highcf)
-                       / ((float)1 / ((float)bars + (float)1) - 1);
-
-    for (int n = 0; n < bars + 1; n++) {
-        fc[n] = highcf * pow(10, freqconst * (-1)
-                + ((((float)n + 1) / ((float)bars + 1)) * freqconst));
-        fre[n] = fc[n] / (rate / 2);
-        lcf[n] = fre[n] * (M / 4);
-        if (n != 0) {
-            hcf[n - 1] = lcf[n] - 1;
-            if (lcf[n] <= lcf[n - 1])
-                lcf[n] = lcf[n - 1] + 1;
-            hcf[n - 1] = lcf[n] - 1;
-        }
-    }
-
-    for (int n = 0; n < bars; n++) {
-        int offset = sizeof(xdmv_weight) / sizeof(*xdmv_weight) * n / bars;
-        weight[n] = pow(fc[n], 0.6) * ((double)xdmv_height / xdmv_sample_rate / 4000) * xdmv_weight[offset];
-    }
-}
-
-void
 sig_handler(int sig_no)
 {
     xdmv_xorg_cleanup();
@@ -553,8 +539,6 @@ main(int argc, char **argv)
     int n = xdmv_loadwav(f, &xdmv_wav_header, &xdmv_wav_data, &xdmv_wav_audio);
     dieif(n < 0, "Could not load music file");
     fclose(f);
-
-    xdmv_init();
 
     return xdmv_xorg(argc, argv);
 }

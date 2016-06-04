@@ -142,6 +142,7 @@ struct xdmv {
 
     struct output_list {
         XRROutputInfo *info;
+        XRRCrtcInfo *crtc;
         struct output_list *next;
     } *output_list;
     XRRScreenResources *screenresources;
@@ -378,43 +379,45 @@ xdmv_spectrum_create(Display *d, int s, Window w, Pixmap bg, fftw_complex *out,
 
 float *
 xdmv_render_spectrum_top(Display *d, int s, Window w, Pixmap bg, fftw_complex *out,
-        unsigned int t, int bars)
+        unsigned int t, int bars, int offx, int offy, int width)
 {
     float *f = xdmv_spectrum_create(d, s, w, bg, out, t, bars);
 
     /* Render */
     for (int i = 0; i < bars; i++) {
-        float height = f[i];
+        float boxh = f[i];
 
-        xdmv_render_box(d, s, w, xdmv_width / bars * i + xdmv_padding_x,
-                                 xdmv_offset_top,
+        xdmv_render_box(d, s, w, offx + width / bars * i + xdmv_padding_x,
+                                 offy + xdmv_offset_top,
                                  xdmv_box_size,
-                                 height);
+                                 boxh);
     }
     XFlush(d);
 }
 
 float *
 xdmv_render_spectrum_bot(Display *d, int s, Window w, Pixmap bg, fftw_complex *out,
-        unsigned int t, int bars, int offset)
+        unsigned int t, int bars, int offx, int offy, int width, int height)
 {
     float *f = xdmv_spectrum_create(d, s, w, bg, out, t, bars);
 
     /* Render */
     for (int i = 0; i < bars; i++) {
-        float height = f[i];
+        float boxh = f[i];
 
-        xdmv_render_box(d, s, w, xdmv_width / bars * i + xdmv_padding_x,
-                                 offset - height - xdmv_offset_bot,
+        xdmv_render_box(d, s, w, offx + width / bars * i + xdmv_padding_x,
+                                 offy + height - boxh - xdmv_offset_bot,
                                  xdmv_box_size,
-                                 height);
+                                 boxh);
     }
     XFlush(d);
 }
 
 float *
-xdmv_render_spectrums(Display *d, int s, Window w, Pixmap bg, unsigned int t, int width, int height)
+xdmv_render_spectrums(Display *d, int s, Window w, Pixmap bg, unsigned int t, XRRCrtcInfo *crtc)
 {
+    int width = crtc->width, height = crtc->height, offx = crtc->x, offy = crtc->y;
+
     int bars = (width - xdmv_padding_x * 2) / (xdmv_box_size + xdmv_box_margin);
     size_t offset = xdmv_wav_header.sample_rate * t / 1000;
     static float *f;
@@ -430,11 +433,11 @@ xdmv_render_spectrums(Display *d, int s, Window w, Pixmap bg, unsigned int t, in
     for (int i = 0; i < xdmv_sample_rate; i++)
         in[i] = xdmv_wav_audio[offset + i].r;
     fftw_execute(p);
-    xdmv_render_spectrum_top(d, s, w, bg, out, t, bars);
+    xdmv_render_spectrum_top(d, s, w, bg, out, t, bars, offx, offy, width);
     for (int i = 0; i < xdmv_sample_rate; i++)
         in[i] = xdmv_wav_audio[offset + i].l;
     fftw_execute(p);
-    xdmv_render_spectrum_bot(d, s, w, bg, out, t, bars, height);
+    xdmv_render_spectrum_bot(d, s, w, bg, out, t, bars, offx, offy, width, height);
 }
 
 void
@@ -470,8 +473,9 @@ xdmv_xorg(int argc, char **argv)
         info = XRRGetOutputInfo(display, sr, sr->outputs[i]);
         if (info->connection == RR_Connected) {
             (*ol)->info = info;
+            (*ol)->crtc = XRRGetCrtcInfo(display, sr, info->crtc);
             (*ol)->next = xmalloc(sizeof **ol);
-            *ol = (*ol)->next;
+            ol = &(*ol)->next;
         }
     }
     *ol = NULL;
@@ -503,7 +507,10 @@ xdmv_xorg(int argc, char **argv)
         if (loop_start - start > end)
             break;
 
-        xdmv_render_spectrums(display, s, xdmv.backbuffer, xdmv.bg, loop_start - start, xdmv_width, 1920);
+        for (struct output_list *ol = xdmv.output_list; ol; ol = ol->next) {
+            XRRCrtcInfo *crtc = ol->crtc;
+            xdmv_render_spectrums(display, s, xdmv.backbuffer, xdmv.bg, loop_start - start, crtc);
+        }
         XdbeSwapBuffers(display, &xdmv.swapinfo, 1);
 
         unsigned int next = 1000 / xdmv_framerate;

@@ -23,11 +23,11 @@
 #define xdmv_sample_rate 2048
 #define xdmv_height 100
 #define xdmv_width 1080
-#define xdmv_margin 2
 #define xdmv_offset_top 20
 #define xdmv_offset_bot 0
 #define xdmv_padding_x 10
 #define xdmv_box_size 13
+#define xdmv_box_margin 2
 
 #define xdmv_lowest_freq 50
 #define xdmv_highest_freq 22000
@@ -355,13 +355,12 @@ xdmv_spectrum_calculate(int bars)
     }
 }
 
-void
-xdmv_render_spectrum(Display *d, int s, Window w, Pixmap bg, unsigned int t, int width)
+float *
+xdmv_spectrum_create(Display *d, int s, Window w, Pixmap bg, unsigned int t, int bars)
 {
-    int bars = (width - xdmv_padding_x * 2) / xdmv_box_size;
     xdmv_spectrum_calculate(bars);
     size_t offset = xdmv_wav_header.sample_rate * t / 1000;
-    float *f;
+    static float *f;
     static double *in;
     static fftw_complex *out;
     static fftw_plan p;
@@ -386,14 +385,23 @@ xdmv_render_spectrum(Display *d, int s, Window w, Pixmap bg, unsigned int t, int
     for (int o = 0; o < bars; o++)
         f[o] = f[o] == 0.0 ? 1.0 : f[o];
 
+    return f;
+}
+
+float *
+xdmv_render_spectrum_top(Display *d, int s, Window w, Pixmap bg, unsigned int t, int width)
+{
+    int bars = (width - xdmv_padding_x * 2) / (xdmv_box_size + xdmv_box_margin);
+    float *f = xdmv_spectrum_create(d, s, w, bg, t, bars);
+
     /* Render */
     for (int i = 0; i < bars; i++) {
         float height = f[i];
 
         xdmv_render_box(d, s, w, xdmv_width / bars * i + xdmv_padding_x,
                                  xdmv_offset_top,
-                                 xdmv_width / bars - xdmv_margin,
-                                 height );
+                                 xdmv_box_size,
+                                 height);
     }
     XFlush(d);
 }
@@ -426,7 +434,6 @@ xdmv_xorg(int argc, char **argv)
     XRRScreenResources *sr = xdmv.screenresources;
     struct output_list **ol = &xdmv.output_list;
     *ol = xmalloc(sizeof **ol);
-    printf("%d\n", sr->noutput);
     for (int i = 0; i < sr->noutput; i++) {
         XRROutputInfo *info;
         info = XRRGetOutputInfo(display, sr, sr->outputs[i]);
@@ -465,7 +472,7 @@ xdmv_xorg(int argc, char **argv)
         if (loop_start - start > end)
             break;
 
-        xdmv_render_spectrum(display, s, xdmv.backbuffer, xdmv.bg, loop_start - start, xdmv_width);
+        xdmv_render_spectrum_top(display, s, xdmv.backbuffer, xdmv.bg, loop_start - start, xdmv_width);
         XdbeSwapBuffers(display, &xdmv.swapinfo, 1);
 
         unsigned int next = 1000 / xdmv_framerate;

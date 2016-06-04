@@ -13,8 +13,15 @@
 
 /* Config */
 #define xdmv_refresh_rate 1000/60
-#define xdmv_height 200
 #define xdmv_sample_size 48000
+/* TODO Replace these with functions that get these values dynamically/from
+ * configs */
+#define xdmv_height 100
+#define xdmv_width 1080
+#define xdmv_margin 2
+#define xdmv_offset_y 20
+#define xdmv_offset_x 0
+#define xdmv_box_count 40
 
 /* Utils */
 #define eprintf(...) fprintf(stderr, __VA_ARGS__);
@@ -106,16 +113,33 @@ xdmv_set_prop(Display *d, Window w, const char *prop, const char *atom)
     XChangeProperty(d, w, xa, XA_ATOM, 32, PropModeAppend, (unsigned char *) &xa_prop, 1);
 }
 
+void
+xdmv_render_box(Display *d, int s, Window win, int x, int y, int w, int h)
+{
+    /* For now: a black box. */
+    /* In the future: possibly fancy effects using shaders and pixmaps for
+     * backgrounds */
+    XFillRectangle(d, win, DefaultGC(d, s), x, y, w, h);
+}
 
 void
 xdmv_render_test(Display *d, int s, Window w, Pixmap bg, unsigned int t)
 {
         double coeff = (t % 4000) / 2000.0;
-        double delta = sin(M_PI * coeff) * 350;
 
-        XCopyArea(d, bg, w, DefaultGC(d, s), 0, 0, 800, 200, 0, 0);
+        XCopyArea(d, bg, w, DefaultGC(d, s), 0, 0, xdmv_width,
+                                                   xdmv_height,
+                                                   xdmv_offset_x,
+                                                   xdmv_offset_y);
         XFlush(d);
-        XFillRectangle(d, w, DefaultGC(d, s), 400 + delta, 20, 10, 10);
+
+        for (int x = 0; x < xdmv_box_count; x++) {
+            double delta = (sin(M_PI * coeff + (double)x * M_PI * 2.0 / xdmv_box_count) + 1.0) / 2.0;
+            xdmv_render_box(d, s, w, xdmv_width / xdmv_box_count * x + xdmv_offset_x,
+                                     xdmv_offset_y,
+                                     xdmv_width / xdmv_box_count - xdmv_margin,
+                                     xdmv_height * delta);
+        }
         XFlush(d);
 }
 
@@ -140,8 +164,12 @@ xdmv_xorg(int argc, char **argv)
     XSelectInput(display, window, ExposureMask | KeyPressMask);
     XMapWindow(display, window);
     /* testing pixmaps */
-    Pixmap bg = XCreatePixmap(display, window, 800, 200, 24);
-    XCopyArea(display, window, bg, DefaultGC(display, s), 0, 0, 800, 200, 0, 0);
+    Pixmap bg = XCreatePixmap(display, window, xdmv_width, xdmv_height, 24);
+    XCopyArea(display, window, bg, DefaultGC(display, s), xdmv_offset_x,
+                                                          xdmv_offset_y,
+                                                          xdmv_width,
+                                                          xdmv_height,
+                                                          0, 0);
 
     for (;;) {
         /* XNextEvent(display, &event); */

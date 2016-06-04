@@ -356,24 +356,12 @@ xdmv_spectrum_calculate(int bars)
 }
 
 float *
-xdmv_spectrum_create(Display *d, int s, Window w, Pixmap bg, unsigned int t, int bars)
+xdmv_spectrum_create(Display *d, int s, Window w, Pixmap bg, fftw_complex *out,
+        unsigned int t, int bars)
 {
     xdmv_spectrum_calculate(bars);
-    size_t offset = xdmv_wav_header.sample_rate * t / 1000;
-    static float *f;
-    static double *in;
-    static fftw_complex *out;
-    static fftw_plan p;
-    if (!in && !out) {
-        in = fftw_malloc(sizeof(*in) * xdmv_sample_rate);
-        out = fftw_malloc(sizeof(*out) * xdmv_sample_rate);
-        p = fftw_plan_dft_r2c_1d(xdmv_sample_rate, in, out, FFTW_MEASURE);
-    }
 
-    for (int i = 0; i < xdmv_sample_rate; i++)
-        in[i] = xdmv_wav_audio[offset + i].l;
-
-    fftw_execute(p);
+    float *f;
     f = separate_freq_bands(out, bars, lcf, hcf);
     f = filter_monstercat(f, bars);
     f = filter_savitskysmooth(f, bars);
@@ -389,10 +377,10 @@ xdmv_spectrum_create(Display *d, int s, Window w, Pixmap bg, unsigned int t, int
 }
 
 float *
-xdmv_render_spectrum_top(Display *d, int s, Window w, Pixmap bg, unsigned int t, int width)
+xdmv_render_spectrum_top(Display *d, int s, Window w, Pixmap bg, fftw_complex *out,
+        unsigned int t, int bars)
 {
-    int bars = (width - xdmv_padding_x * 2) / (xdmv_box_size + xdmv_box_margin);
-    float *f = xdmv_spectrum_create(d, s, w, bg, t, bars);
+    float *f = xdmv_spectrum_create(d, s, w, bg, out, t, bars);
 
     /* Render */
     for (int i = 0; i < bars; i++) {
@@ -404,6 +392,49 @@ xdmv_render_spectrum_top(Display *d, int s, Window w, Pixmap bg, unsigned int t,
                                  height);
     }
     XFlush(d);
+}
+
+float *
+xdmv_render_spectrum_bot(Display *d, int s, Window w, Pixmap bg, fftw_complex *out,
+        unsigned int t, int bars, int offset)
+{
+    float *f = xdmv_spectrum_create(d, s, w, bg, out, t, bars);
+
+    /* Render */
+    for (int i = 0; i < bars; i++) {
+        float height = f[i];
+
+        xdmv_render_box(d, s, w, xdmv_width / bars * i + xdmv_padding_x,
+                                 offset - height - xdmv_offset_bot,
+                                 xdmv_box_size,
+                                 height);
+    }
+    XFlush(d);
+}
+
+float *
+xdmv_render_spectrums(Display *d, int s, Window w, Pixmap bg, unsigned int t, int width, int height)
+{
+    int bars = (width - xdmv_padding_x * 2) / (xdmv_box_size + xdmv_box_margin);
+    size_t offset = xdmv_wav_header.sample_rate * t / 1000;
+    static float *f;
+    static double *in;
+    static fftw_complex *out;
+    static fftw_plan p;
+    if (!in && !out) {
+        in = fftw_malloc(sizeof(*in) * xdmv_sample_rate);
+        out = fftw_malloc(sizeof(*out) * xdmv_sample_rate);
+        p = fftw_plan_dft_r2c_1d(xdmv_sample_rate, in, out, FFTW_MEASURE);
+    }
+
+    for (int i = 0; i < xdmv_sample_rate; i++)
+        in[i] = xdmv_wav_audio[offset + i].r;
+    fftw_execute(p);
+    xdmv_render_spectrum_top(d, s, w, bg, out, t, bars);
+    for (int i = 0; i < xdmv_sample_rate; i++)
+        in[i] = xdmv_wav_audio[offset + i].l;
+    fftw_execute(p);
+    xdmv_render_spectrum_bot(d, s, w, bg, out, t, bars, height);
 }
 
 void
@@ -472,7 +503,7 @@ xdmv_xorg(int argc, char **argv)
         if (loop_start - start > end)
             break;
 
-        xdmv_render_spectrum_top(display, s, xdmv.backbuffer, xdmv.bg, loop_start - start, xdmv_width);
+        xdmv_render_spectrums(display, s, xdmv.backbuffer, xdmv.bg, loop_start - start, xdmv_width, 1920);
         XdbeSwapBuffers(display, &xdmv.swapinfo, 1);
 
         unsigned int next = 1000 / xdmv_framerate;

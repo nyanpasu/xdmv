@@ -31,31 +31,31 @@
 #define xdmv_offset_top 20
 #define xdmv_offset_bot (-1)
 #define xdmv_padding_x 10
-#define xdmv_box_size 13
-#define xdmv_box_margin 2
+#define xdmv_box_size 7
+#define xdmv_box_margin 1
 #define xdmv_box_color 0x616568
 
-#define xdmv_lowest_freq 50
+#define xdmv_lowest_freq 80
 #define xdmv_highest_freq 22000
 
-#define xdmv_smooth_passes 4
+#define xdmv_smooth_passes 2
 /* must be odd number */
 #define xdmv_smooth_points 3
 
 /* filter settings */
-#define xdmv_monstercat 2
+#define xdmv_monstercat 2.0
 #define xdmv_integral 0.7
-#define xdmv_gravity 0.7
+#define xdmv_gravity 1.0
 double xdmv_weight[64] = {0.8, 0.8, 1, 1, 0.8, 0.8, 1, 0.8, 0.8, 1, 1, 0.8, 1, 1,
     0.8, 0.6, 0.6, 0.7, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8,
     0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8,
     0.8, 0.7, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6,
-    0.6, 0.6, 0.6, 0.4, 0.2};
+    0.6, 0.6, 0.6, 0.5, 0.4};
 /* spectrum margin smoothing settings */
 const float marginDecay = 1.6; // I admittedly forget how this works but it probably shouldn't be changed from 1.6
 // margin weighting follows a polynomial slope passing through (0, minMarginWeight) and (marginSize, 1)
-const float headMargin = 7; // the size of the head margin dropoff zone
-const float tailMargin = 0; // the size of the tail margin dropoff zone
+const float headMargin = 4; // the size of the head margin dropoff zone
+const float tailMargin = 2; // the size of the tail margin dropoff zone
 const float minMarginWeight = 0.6; // the minimum weight applied to bars in the dropoff zone
 #define headMarginSlope ((1 - minMarginWeight) / pow(headMargin, marginDecay))
 #define tailMarginSlope ((1 - minMarginWeight) / pow(tailMargin, marginDecay))
@@ -145,14 +145,14 @@ struct {
 } xdmv_jack;
 
 typedef struct Spectrum {
-    float f[200];
+    float f[400];
     int bars;
 
     /* filter state */
-    int lcf[200], hcf[200];
+    int lcf[400], hcf[400];
     float peak[201];
-    float fc[200], fre[200], weight[200], fmem[200], flast[200], fall[200],
-          fpeak[200];
+    float fc[400], fre[400], weight[400], fmem[400], flast[400], fall[400],
+          fpeak[400];
 
     double *in;
     fftw_complex *out;
@@ -243,7 +243,7 @@ filter_savitskysmooth(Spectrum *s)
     /* Savitsky-Golay smoothing algorithm */
     /* from vis.js */
     int bars = s->bars;
-    static float newArr[200];
+    static float newArr[500];
     float *lastArray = s->f;
     for (int pass = 0; pass < xdmv_smooth_passes; pass++) {
         // our window is centered so this is both nL and nR
@@ -330,7 +330,8 @@ filter_gravity(Spectrum *s)
     /* from cava */
     float *f = s->f, *fall = s->fall, *fpeak = s->fpeak, *flast = s->flast;
     int bars = s->bars;
-    static float g = xdmv_gravity * xdmv_height / 270 * pow(60.0 / xdmv_framerate, 2.5);
+    /* static float g = xdmv_gravity * xdmv_height / 270 * pow(60.0 / xdmv_framerate, 2.5); */
+    static float g = xdmv_gravity * pow(60.0 / xdmv_framerate, 2.5);
     float temp;
 
     for (int o = 0; o < bars; o++) {
@@ -338,7 +339,7 @@ filter_gravity(Spectrum *s)
 
         if (temp < flast[o]) {
             f[o] = fpeak[o] - (g * fall[o] * fall[o]);
-            fall[o]++;
+            fall[o] += 16;
         } else {
             f[o] = temp;
             fpeak[o] = f[o];
@@ -384,7 +385,7 @@ xdmv_spectrum_calculate(Spectrum *s)
 
     int lowcf = xdmv_lowest_freq,
         highcf = xdmv_highest_freq,
-        rate = xdmv.sample_rate,
+        rate = xdmv.sample_rate / 2,
         M = xdmv_sample_rate - 2;
 
     int bars = s->bars;
@@ -411,7 +412,7 @@ xdmv_spectrum_calculate(Spectrum *s)
 
     for (int n = 0; n < bars; n++) {
         int offset = sizeof(xdmv_weight) / sizeof(*xdmv_weight) * n / bars;
-        weight[n] = pow(fc[n], 0.6) * ((double)xdmv_height / xdmv_sample_rate / 4000) * xdmv_weight[offset];
+        weight[n] = pow(fc[n], 0.75) * ((double)xdmv_height / xdmv_sample_rate / 4000) * xdmv_weight[offset];
     }
 
 }
@@ -440,7 +441,7 @@ xdmv_render_spectrum_top(Display *d, int s, Window w, Pixmap bg,
 
     /* Render */
     for (int i = 0; i < sp->bars; i++) {
-        float boxh = sp->f[i];
+        float boxh = sp->f[i] / 4;
 
         xdmv_render_box(d, s, w, offx + width / sp->bars * i + xdmv_padding_x,
                                  offy + xdmv_offset_top,
@@ -458,7 +459,7 @@ xdmv_render_spectrum_bot(Display *d, int s, Window w, Pixmap bg,
 
     /* Render */
     for (int i = 0; i < sp->bars; i++) {
-        float boxh = sp->f[i];
+        float boxh = sp->f[i] / 4;
 
         xdmv_render_box(d, s, w, offx + width / sp->bars * i + xdmv_padding_x,
                                  offy + height - boxh - xdmv_offset_bot,

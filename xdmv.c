@@ -136,6 +136,7 @@ struct {
     jack_status_t status;
     jack_port_t *port_l;
     jack_port_t *port_r;
+    unsigned int pos;
 } xdmv_jack;
 
 /* filter state */
@@ -610,19 +611,30 @@ xdmv_loadwav(FILE *f, struct wav_header *h, void **wav_data,
 int
 xdmv_jack_process(jack_nframes_t nframes, void *arg)
 {
-    printf("jack_process\n");
+    uint16_t *bufl = jack_port_get_buffer(xdmv_jack.port_l, nframes);
+    uint16_t *bufr = jack_port_get_buffer(xdmv_jack.port_r, nframes);
+
+    unsigned int i = 0;
+    unsigned int pos = xdmv_jack.pos;
+    while(i++, pos++, nframes--) {
+        xdmv.inl[pos % xdmv_sample_rate] = bufl[i];
+        xdmv.inr[pos % xdmv_sample_rate] = bufr[i];
+    }
+    xdmv_jack.pos = pos;
+
+    return 0;
 }
 
 int
 xdmv_jack_sample_rate(jack_nframes_t nframes, void *arg)
 {
-    printf("jack_sample_rate\n");
+    xdmv.sample_rate = nframes;
+    return 0;
 }
 
 void
 xdmv_jack_port_connect(jack_port_id_t a, jack_port_id_t b, int connect, void *arg)
 {
-    printf("jack_port_connect\n");
 }
 
 int
@@ -649,6 +661,8 @@ xdmv_jack_init()
     xdmv_jack.port_r = r;
 
     xdmv.sample_rate = jack_get_sample_rate(client);
+
+    jack_activate(client);
 
     return 0;
 }

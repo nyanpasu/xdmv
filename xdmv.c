@@ -24,7 +24,7 @@
 #define xdmv_height 100
 #define xdmv_width 1080
 #define xdmv_offset_top 20
-#define xdmv_offset_bot 0
+#define xdmv_offset_bot (-1)
 #define xdmv_padding_x 10
 #define xdmv_box_size 13
 #define xdmv_box_margin 2
@@ -44,7 +44,7 @@ double xdmv_weight[64] = {0.8, 0.8, 1, 1, 0.8, 0.8, 1, 0.8, 0.8, 1, 1, 0.8, 1, 1
     0.8, 0.6, 0.6, 0.7, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8,
     0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8,
     0.8, 0.7, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6,
-    0.6, 0.6, 0.6, 0.6, 0.6};
+    0.6, 0.6, 0.6, 0.4, 0.2};
 /* spectrum margin smoothing settings */
 const float marginDecay = 1.6; // I admittedly forget how this works but it probably shouldn't be changed from 1.6
 // margin weighting follows a polynomial slope passing through (0, minMarginWeight) and (marginSize, 1)
@@ -161,7 +161,7 @@ gettime()
 {
     /* Time in milliseconds since epoch */
     static struct timespec ts;
-    clock_gettime(CLOCK_REALTIME, &ts);
+    clock_gettime(CLOCK_MONOTONIC_RAW, &ts);
     return ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
 }
 
@@ -196,6 +196,7 @@ float *
 filter_savitskysmooth(float *f, int bars)
 {
     /* Savitsky-Golay smoothing algorithm */
+    /* from vis.js */
     static float newArr[200];
     static float *lastArray;
     lastArray = f;
@@ -222,6 +223,7 @@ filter_savitskysmooth(float *f, int bars)
 float *
 filter_marginsmooth(float *f, int bars)
 {
+    /* from vis.js */
     static float values[200];
     for (int i = 0; i < bars; i++) {
         float value = f[i];
@@ -238,6 +240,7 @@ filter_marginsmooth(float *f, int bars)
 float *
 filter_freqweight(float *f, int bars)
 {
+    /* from cava */
     for (int i = 0; i < bars; i++)
         f[i] *= weight[i];
     return f;
@@ -246,6 +249,7 @@ filter_freqweight(float *f, int bars)
 float *
 filter_monstercat(float *f, int bars)
 {
+    /* from cava */
     int y, z, de;
     for (z = 0; z < bars; z++) {
         if (f[z] < 0.125)f[z] = 0.125;
@@ -264,6 +268,7 @@ filter_monstercat(float *f, int bars)
 float *
 filter_integral(float *f, int bars)
 {
+    /* from cava */
     for (int o = 0; o < bars; o++) {
         fmem[o] = fmem[o] * xdmv_integral + f[o];
         f[o] = fmem[o];
@@ -275,6 +280,7 @@ filter_integral(float *f, int bars)
 float *
 filter_gravity(float *f, int bars)
 {
+    /* from cava */
     static float g = xdmv_gravity * xdmv_height / 270 * pow(60.0 / xdmv_framerate, 2.5);
     float temp;
 
@@ -300,7 +306,7 @@ float *
 separate_freq_bands(fftw_complex *out, int bars,
                     int *lcf, int *hcf)
 {
-    /* Original source: cava */
+    /* from cava */
     int o,i;
     float peak[201];
     static float f[200];
@@ -327,7 +333,7 @@ separate_freq_bands(fftw_complex *out, int bars,
 void
 xdmv_spectrum_calculate(int bars)
 {
-    /* Source: cava */
+    /* from cava */
 
     int lowcf = xdmv_lowest_freq,
         highcf = xdmv_highest_freq,

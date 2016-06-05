@@ -1,15 +1,31 @@
-Can't get xdmv to render below other windows consistently on all X environments
-without rendering straight to the desktop window. Conky does this, so I'm
-guessing it's probably alright to do.
+DONE Renders straight to root window
+     Can't get xdmv to render below other windows consistently on all X
+     environments without rendering straight to the desktop window. Conky does
+     this, so I'm guessing it's probably alright to do.
 
-I think I can enable double buffering on the root window, so it should be fine
-for running animations as well.
+DONE Use fftw for fourier transforms if I don't want to use my own
+     implementation. Here is a good example of how to use it:
+       - https://github.com/karlstav/cava
+     Thanks cava for the help
 
-I'll have to use fftw for fourier transforms if I don't want to use my own
-implementation. Here is a good example of how to use it:
-  - https://github.com/karlstav/cava
+DONE Use xrandr to get screen size configured automatically
+     Using it was a first hand experience that there's no better docs than the
+     source itself
+DONE Have 2 spectrums per Monitor, for each channel. Each spectrum is independent from the rest.
+DONE Enable double buffering on the root window, so it should be fine for
+     running animations as well.
 
-need to use xrandr to get screen size configured automatically
+TODO Experiment with compositing and hardware acceleration for partial
+     transparency and background merging
+TODO Support multiple audio streams, not just file input
+TODO Consider mpd access
+TODO Find bug with wav playback getting wrong data 50% through a song
+TODO Add preview for README once it looks okay
+TODO Test in environments other than minimal X. Probably won't work well with
+     other programs using root.
+TODO Reduce scope of global filter states (make them static vars for the filter
+     funcs or something)
+TODO Add support for more file types
+TODO Experiment with direct hardware access if Linux allows this
+TODO Add a function for getting audio data from agnostic source
 
-will probably have 2 spectrums per monitor, for each channel. each spectrum is
-independent from the rest.

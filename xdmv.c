@@ -165,6 +165,7 @@ struct xdmv {
     fftw_plan pl, pr;
 
     int song_length;
+    uint32_t sample_rate;
 } xdmv;
 
 enum {
@@ -366,7 +367,7 @@ xdmv_spectrum_calculate(int bars)
 
     int lowcf = xdmv_lowest_freq,
         highcf = xdmv_highest_freq,
-        rate = xdmv_wav_header.sample_rate,
+        rate = xdmv.sample_rate,
         M = xdmv_sample_rate;
 
     double freqconst = log10((float)lowcf / (float)highcf)
@@ -465,7 +466,7 @@ xdmv_render_spectrums(Display *d, int s, Window w, Pixmap bg, unsigned long t, X
 void
 xdmv_fftw_update(unsigned long t)
 {
-    size_t offset = xdmv_wav_header.sample_rate * t / 1000;
+    size_t offset = xdmv.sample_rate * t / 1000;
 
     switch (xdmv_source) {
         case source_file_wav:
@@ -527,8 +528,6 @@ xdmv_xorg(int argc, char **argv)
     Window window = xdmv.window;
     int s = xdmv.screen;
 
-    /* select kind of events we are interested in */
-    XSelectInput(display, window, ExposureMask | KeyPressMask);
     XMapWindow(display, window);
 
     /* set up double buffering */
@@ -542,15 +541,16 @@ xdmv_xorg(int argc, char **argv)
 
     /* main render loop */
     unsigned long start = gettime(), loop_start = 0;
-    unsigned long end = xdmv.song_length * 1000 -
-                        xdmv_sample_rate * 1000 / xdmv_wav_header.sample_rate;
+    unsigned long wav_end = xdmv.song_length * 1000 -
+                        xdmv_sample_rate * 1000 / xdmv.sample_rate;
     for (;;) {
         loop_start = gettime();
         unsigned long cur = loop_start - start;
-        if (cur > end)
+        if (xdmv.song_length > 0 && cur > wav_end)
             break;
 
         xdmv_fftw_update(cur);
+
         for (struct output_list *ol = xdmv.output_list; ol; ol = ol->next) {
             XRRCrtcInfo *crtc = ol->crtc;
             xdmv_render_spectrums(display, s, xdmv.backbuffer, xdmv.bg, cur, crtc);
@@ -580,13 +580,12 @@ xdmv_loadwav(FILE *f, struct wav_header *h, void **wav_data,
     if (strncmp(h->riff, "RIFF", 4)) return -1;
     if (strncmp(h->wave, "WAVE", 4)) return -1;
     if (strncmp(h->fmt, "fmt", 3))   return -1;
-    /* skip checking data marker cus it varies or something */
 
-    /* support only 16 bits for testing */
+    /* support only these properties for now */
     if (h->bits_per_sample != 16)    return -1;
     if (h->channels != 2)            return -1;
 
-    /* Read until data chunk */
+    /* read until data chunk */
     struct wav_header_chunk hc;
     for (;;) {
         if ((n = fread(&hc, 1, sizeof hc, f)) < 0)
@@ -598,6 +597,7 @@ xdmv_loadwav(FILE *f, struct wav_header *h, void **wav_data,
 
     unsigned int sz = hc.size;
     xdmv.song_length = sz * 8 / h->bits_per_sample / h->channels / h->sample_rate;
+    xdmv.sample_rate = h->sample_rate;
 
     *wav_data = xmalloc(sz);
     *wav_audio = *wav_data;
@@ -648,6 +648,8 @@ xdmv_jack_init()
     xdmv_jack.port_l = l;
     xdmv_jack.port_r = r;
 
+    xdmv.sample_rate = jack_get_sample_rate(client);
+
     return 0;
 }
 
@@ -678,8 +680,8 @@ xdmv_load_sources(int argc, char **argv)
         xdmv_source = source_file_wav;
     } else if (!xdmv_jack_init()) {
         xdmv_source = source_jack;
-        jack_client_close(xdmv_jack.client);
-        exit(1);
+        /* jack_client_close(xdmv_jack.client); */
+        /* exit(1); */
     } else {
         die("Could not load any source");
     }

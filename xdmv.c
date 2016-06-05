@@ -29,6 +29,7 @@
 #define xdmv_padding_x 10
 #define xdmv_box_size 13
 #define xdmv_box_margin 2
+#define xdmv_box_color 0x616568
 
 #define xdmv_lowest_freq 50
 #define xdmv_highest_freq 22000
@@ -195,7 +196,13 @@ xdmv_render_box(Display *d, int s, Window win, int x, int y, int w, int h)
     /* For now: a black box. */
     /* In the future: possibly fancy effects using shaders and pixmaps for
      * backgrounds */
-    XFillRectangle(d, win, DefaultGC(d, s), x, y, w, h);
+    static GC gc;
+    if (!gc) {
+        gc = DefaultGC(d, s);
+        XSetForeground(d, gc, xdmv_box_color);
+    }
+
+    XFillRectangle(d, win, gc, x, y, w, h);
 }
 
 float *

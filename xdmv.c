@@ -1,11 +1,12 @@
-#include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
 
-#include <time.h>
+#include <assert.h>
 #include <math.h>
+#include <signal.h>
+#include <string.h>
+#include <time.h>
 
 #include <X11/Xatom.h>
 #include <X11/Xlib.h>
@@ -169,10 +170,11 @@ int
 xdmv_sleep(unsigned long ms)
 {
     static struct timespec rts;
-    rts.tv_sec = 0;
-    rts.tv_nsec = ms * 1000000;
+    rts.tv_sec = ms / 1000;
+    rts.tv_nsec = ms % 1000 * 1000;
 
-    return nanosleep(&rts, 0);
+    if (nanosleep(&rts, 0))
+        perror("nanosleep");
 }
 
 int

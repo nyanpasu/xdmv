@@ -140,8 +140,8 @@ struct {
     jack_port_t *port_r;
     unsigned int pos;
 
-    uint16_t bufl[xdmv_sample_rate];
-    uint16_t bufr[xdmv_sample_rate];
+    float bufl[xdmv_sample_rate];
+    float bufr[xdmv_sample_rate];
 } xdmv_jack;
 
 typedef struct Spectrum {
@@ -385,7 +385,7 @@ xdmv_spectrum_calculate(Spectrum *s)
     int lowcf = xdmv_lowest_freq,
         highcf = xdmv_highest_freq,
         rate = xdmv.sample_rate,
-        M = xdmv_sample_rate;
+        M = xdmv_sample_rate - 2;
 
     int bars = s->bars;
     float *fc = s->fc, *fre = s->fre, *weight = s->weight;
@@ -405,20 +405,21 @@ xdmv_spectrum_calculate(Spectrum *s)
                 lcf[n] = lcf[n - 1] + 1;
             hcf[n - 1] = lcf[n] - 1;
         }
+        /* if (n != 0) */
+        /*     printf("%d: %f -> %f (%d -> %d) \n", n, fc[n - 1], fc[n], lcf[n - 1], hcf[n - 1]); */
     }
 
     for (int n = 0; n < bars; n++) {
         int offset = sizeof(xdmv_weight) / sizeof(*xdmv_weight) * n / bars;
         weight[n] = pow(fc[n], 0.6) * ((double)xdmv_height / xdmv_sample_rate / 4000) * xdmv_weight[offset];
     }
+
 }
 
 void
 xdmv_spectrum_create(Display *d, int s, Window w, Pixmap bg, unsigned int t,
         Spectrum *sp)
 {
-    xdmv_spectrum_calculate(sp);
-
     separate_freq_bands(sp);
     filter_monstercat(sp);
     filter_savitskysmooth(sp);
@@ -472,24 +473,24 @@ xdmv_render_spectrums(Display *d, int s, Window w, Pixmap bg, unsigned long t, s
 {
     XRRCrtcInfo *crtc = ol->crtc;
     int width = crtc->width, height = crtc->height, offx = crtc->x, offy = crtc->y;
-    int bars = (width - xdmv_padding_x * 2) / (xdmv_box_size + xdmv_box_margin);
-    size_t offset = xdmv.sample_rate * t / 1000;
+    size_t offset;
 
     Spectrum *sl = &ol->spectruml;
     Spectrum *sr = &ol->spectrumr;
-    sl->bars = sr->bars = bars;
 
     switch (xdmv_source) {
         case source_file_wav:
+            offset = xdmv.sample_rate * t / 1000;
             for (size_t i = 0; i < xdmv_sample_rate; i++) {
                 sl->in[i] = xdmv_wav_audio[offset + i].l;
                 sr->in[i] = xdmv_wav_audio[offset + i].r;
             }
             break;
         case source_jack:
+            offset = xdmv.sample_rate * t / 4000;
             for (size_t i = 0; i < xdmv_sample_rate; i++) {
-                sl->in[i] = xdmv_jack.bufl[i];
-                sr->in[i] = xdmv_jack.bufr[i];
+                sl->in[i] = xdmv_jack.bufl[(offset + i) % xdmv_sample_rate] * 65536;
+                sr->in[i] = xdmv_jack.bufr[(offset + i) % xdmv_sample_rate] * 65536;
             }
             break;
         default:
@@ -548,6 +549,14 @@ xdmv_xorg(int argc, char **argv)
             (*ol)->next = xmalloc(sizeof **ol);
             xdmv_fftw_init(&(*ol)->spectruml);
             xdmv_fftw_init(&(*ol)->spectrumr);
+            XRRCrtcInfo *crtc = (*ol)->crtc;
+            Spectrum *sl = &(*ol)->spectruml;
+            Spectrum *sr = &(*ol)->spectrumr;
+            int width = crtc->width, height = crtc->height, offx = crtc->x, offy = crtc->y;
+            int bars = (width - xdmv_padding_x * 2) / (xdmv_box_size + xdmv_box_margin);
+            sl->bars = sr->bars = bars;
+            xdmv_spectrum_calculate(sl);
+            xdmv_spectrum_calculate(sr);
             ol = &(*ol)->next;
         }
     }
@@ -637,11 +646,12 @@ xdmv_loadwav(FILE *f, struct wav_header *h, void **wav_data,
 int
 xdmv_jack_process(jack_nframes_t nframes, void *arg)
 {
-    uint16_t *bufl = jack_port_get_buffer(xdmv_jack.port_l, nframes);
-    uint16_t *bufr = jack_port_get_buffer(xdmv_jack.port_r, nframes);
+    float *bufl = jack_port_get_buffer(xdmv_jack.port_l, nframes);
+    float *bufr = jack_port_get_buffer(xdmv_jack.port_r, nframes);
 
     unsigned int i = 0;
     unsigned int pos = xdmv_jack.pos;
+    nframes /= 4;
     while(i++, pos++, nframes--) {
         xdmv_jack.bufl[pos % xdmv_sample_rate] = bufl[i];
         xdmv_jack.bufr[pos % xdmv_sample_rate] = bufr[i];

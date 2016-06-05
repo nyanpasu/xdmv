@@ -19,7 +19,7 @@ TODO Experiment with compositing and hardware acceleration for partial
      transparency and background merging
 TODO Support multiple audio streams, not just file input
 TODO Consider mpd access
-TODO Find bug with wav playback getting wrong data 50% through a song
+DONE Find bug with wav playback getting wrong data 50% through a song
 TODO Add preview for README once it looks okay
 TODO Test in environments other than minimal X. Probably won't work well with
      other programs using root.

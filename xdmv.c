@@ -171,10 +171,14 @@ xdmv_sleep(unsigned long ms)
 {
     static struct timespec rts;
     rts.tv_sec = ms / 1000;
-    rts.tv_nsec = ms % 1000 * 1000;
+    rts.tv_nsec = ms % 1000 * 1000 * 1000;
 
-    if (nanosleep(&rts, 0))
-        perror("nanosleep");
+    if (clock_nanosleep(CLOCK_MONOTONIC, 0, &rts, 0)) {
+        perror("clock_nanosleep");
+        die("I'm a terrible person -- clock");
+    }
+
+    return 0;
 }
 
 int
@@ -421,8 +425,8 @@ xdmv_render_spectrum_bot(Display *d, int s, Window w, Pixmap bg, fftw_complex *o
     XFlush(d);
 }
 
-float *
-xdmv_render_spectrums(Display *d, int s, Window w, Pixmap bg, unsigned int t, XRRCrtcInfo *crtc)
+void
+xdmv_render_spectrums(Display *d, int s, Window w, Pixmap bg, unsigned long t, XRRCrtcInfo *crtc)
 {
     int width = crtc->width, height = crtc->height, offx = crtc->x, offy = crtc->y;
 
@@ -438,11 +442,12 @@ xdmv_render_spectrums(Display *d, int s, Window w, Pixmap bg, unsigned int t, XR
         p = fftw_plan_dft_r2c_1d(xdmv_sample_rate, in, out, FFTW_MEASURE);
     }
 
-    for (int i = 0; i < xdmv_sample_rate; i++)
+    for (size_t i = 0; i < xdmv_sample_rate; i++)
         in[i] = xdmv_wav_audio[offset + i].r;
     fftw_execute(p);
     xdmv_render_spectrum_top(d, s, w, bg, out, t, bars, offx, offy, width);
-    for (int i = 0; i < xdmv_sample_rate; i++)
+
+    for (size_t i = 0; i < xdmv_sample_rate; i++)
         in[i] = xdmv_wav_audio[offset + i].l;
     fftw_execute(p);
     xdmv_render_spectrum_bot(d, s, w, bg, out, t, bars, offx, offy, width, height);
@@ -553,7 +558,7 @@ xdmv_loadwav(FILE *f, struct wav_header *h, void **wav_data,
     /* Read until data chunk */
     struct wav_header_chunk hc;
     for (;;) {
-        if (fread(&hc, 1, sizeof hc, f) < 0)
+        if ((n = fread(&hc, 1, sizeof hc, f)) < 0)
             die("Invalid wav file");
         if (!strncmp(hc.name, "data", 4))
             break;
@@ -565,7 +570,10 @@ xdmv_loadwav(FILE *f, struct wav_header *h, void **wav_data,
 
     *wav_data = xmalloc(sz);
     *wav_audio = *wav_data;
-    return fread(*wav_data, 1, sz, f);
+    if (fread(*wav_data, 1, sz, f) < sz)
+        die("Could not read full file\n");
+
+    return sz;
 }
 
 void

@@ -597,7 +597,7 @@ void xdmv_jack_init()
 void
 xdmv_load_sources(int argc, char **argv)
 {
-    if (argc > 2) {
+    if (argc >= 2) {
         const char *fn = argv[1];
         FILE *f = fopen(fn, "r");
         dieifnull(f, "Could not open music file");

@@ -17,6 +17,8 @@
 
 #include <fftw3.h>
 
+#include <jack/jack.h>
+
 /* Config */
 /* TODO replace these with functions that get these values dynamically/from
  * files */
@@ -155,6 +157,11 @@ struct xdmv {
 
     int song_length;
 } xdmv;
+
+enum {
+    source_file_wav = 0,
+    source_jack,
+} xdmv_source;
 
 /* Program */
 
@@ -583,6 +590,30 @@ xdmv_loadwav(FILE *f, struct wav_header *h, void **wav_data,
     return sz;
 }
 
+void xdmv_jack_init()
+{
+}
+
+void
+xdmv_load_sources(int argc, char **argv)
+{
+    if (argc > 2) {
+        const char *fn = argv[1];
+        FILE *f = fopen(fn, "r");
+        dieifnull(f, "Could not open music file");
+
+        /* TODO support for more formats for testing */
+        /* wav is easiest */
+        int n = xdmv_loadwav(f, &xdmv_wav_header, &xdmv_wav_data, &xdmv_wav_audio);
+        dieif(n < 0, "Could not load music file");
+        fclose(f);
+        xdmv_source = source_file_wav;
+    } else {
+        xdmv_jack_init();
+        xdmv_source = source_jack;
+    }
+}
+
 void
 sig_handler(int sig_no)
 {
@@ -594,21 +625,9 @@ sig_handler(int sig_no)
 int
 main(int argc, char **argv)
 {
-    if (argc < 2) {
-        eprintf("Usage: %s music_file [x display]\n", *argv);
-        exit(1);
-    }
-
     signal(SIGINT, &sig_handler);
     signal(SIGTERM, &sig_handler);
-
-    const char *fn = argv[1];
-    FILE *f = fopen(fn, "r");
-    dieifnull(f, "Could not open music file");
-    int n = xdmv_loadwav(f, &xdmv_wav_header, &xdmv_wav_data, &xdmv_wav_audio);
-    dieif(n < 0, "Could not load music file");
-    fclose(f);
-
+    xdmv_load_sources(argc,argv);
     return xdmv_xorg(argc, argv);
 }
 

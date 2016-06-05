@@ -117,7 +117,7 @@ struct wav_header {
     uint32_t _1;
     uint16_t _2;
     uint16_t bits_per_sample;
-};
+} xdmv_wav_header;
 
 struct wav_header_chunk {
     char name[4];
@@ -127,11 +127,16 @@ struct wav_header_chunk {
 struct wav_sample {
     int16_t l;
     int16_t r;
-};
+} *xdmv_wav_audio;
 
-struct wav_header xdmv_wav_header;
 void *xdmv_wav_data;
-struct wav_sample *xdmv_wav_audio;
+
+struct {
+    jack_client_t *client;
+    jack_status_t status;
+    jack_port_t *port_l;
+    jack_port_t *port_r;
+} xdmv_jack;
 
 /* filter state */
 int lcf[200], hcf[200];
@@ -154,6 +159,10 @@ struct xdmv {
     Pixmap bg;
     XdbeBackBuffer backbuffer;
     XdbeSwapInfo swapinfo;
+
+    double *inl, *inr;
+    fftw_complex *outl, *outr;
+    fftw_plan pl, pr;
 
     int song_length;
 } xdmv;
@@ -445,26 +454,32 @@ xdmv_render_spectrums(Display *d, int s, Window w, Pixmap bg, unsigned long t, X
     int width = crtc->width, height = crtc->height, offx = crtc->x, offy = crtc->y;
 
     int bars = (width - xdmv_padding_x * 2) / (xdmv_box_size + xdmv_box_margin);
-    size_t offset = xdmv_wav_header.sample_rate * t / 1000;
     static float *f;
-    static double *in;
-    static fftw_complex *out;
-    static fftw_plan p;
-    if (!in && !out) {
-        in = fftw_malloc(sizeof(*in) * xdmv_sample_rate);
-        out = fftw_malloc(sizeof(*out) * xdmv_sample_rate);
-        p = fftw_plan_dft_r2c_1d(xdmv_sample_rate, in, out, FFTW_MEASURE);
+
+    fftw_execute(xdmv.pl);
+    fftw_execute(xdmv.pr);
+    xdmv_render_spectrum_top(d, s, w, bg, xdmv.outl, t, bars, offx, offy, width);
+    xdmv_render_spectrum_bot(d, s, w, bg, xdmv.outr, t, bars, offx, offy, width, height);
+}
+
+void
+xdmv_fftw_update(unsigned long t)
+{
+    size_t offset = xdmv_wav_header.sample_rate * t / 1000;
+
+    switch (xdmv_source) {
+        case source_file_wav:
+            for (size_t i = 0; i < xdmv_sample_rate; i++) {
+                xdmv.inl[i] = xdmv_wav_audio[offset + i].l;
+                xdmv.inr[i] = xdmv_wav_audio[offset + i].r;
+            }
+            break;
+        case source_jack:
+            /* buffers are updated asynchronously by jack */
+            break;
+        default:
+            die("wtf?");
     }
-
-    for (size_t i = 0; i < xdmv_sample_rate; i++)
-        in[i] = xdmv_wav_audio[offset + i].r;
-    fftw_execute(p);
-    xdmv_render_spectrum_top(d, s, w, bg, out, t, bars, offx, offy, width);
-
-    for (size_t i = 0; i < xdmv_sample_rate; i++)
-        in[i] = xdmv_wav_audio[offset + i].l;
-    fftw_execute(p);
-    xdmv_render_spectrum_bot(d, s, w, bg, out, t, bars, offx, offy, width, height);
 }
 
 void
@@ -531,12 +546,14 @@ xdmv_xorg(int argc, char **argv)
                         xdmv_sample_rate * 1000 / xdmv_wav_header.sample_rate;
     for (;;) {
         loop_start = gettime();
-        if (loop_start - start > end)
+        unsigned long cur = loop_start - start;
+        if (cur > end)
             break;
 
+        xdmv_fftw_update(cur);
         for (struct output_list *ol = xdmv.output_list; ol; ol = ol->next) {
             XRRCrtcInfo *crtc = ol->crtc;
-            xdmv_render_spectrums(display, s, xdmv.backbuffer, xdmv.bg, loop_start - start, crtc);
+            xdmv_render_spectrums(display, s, xdmv.backbuffer, xdmv.bg, cur, crtc);
         }
         XdbeSwapBuffers(display, &xdmv.swapinfo, 1);
 
@@ -590,8 +607,59 @@ xdmv_loadwav(FILE *f, struct wav_header *h, void **wav_data,
     return sz;
 }
 
-void xdmv_jack_init()
+int
+xdmv_jack_process(jack_nframes_t nframes, void *arg)
 {
+    printf("jack_process\n");
+}
+
+int
+xdmv_jack_sample_rate(jack_nframes_t nframes, void *arg)
+{
+    printf("jack_sample_rate\n");
+}
+
+void
+xdmv_jack_port_connect(jack_port_id_t a, jack_port_id_t b, int connect, void *arg)
+{
+    printf("jack_port_connect\n");
+}
+
+int
+xdmv_jack_init()
+{
+    xdmv_jack.client = jack_client_open("xdmv", JackNoStartServer, &xdmv_jack.status);
+    jack_client_t *client = xdmv_jack.client;
+
+    if (!client)
+        return -1;
+
+    jack_set_process_callback(client, &xdmv_jack_process, 0);
+    jack_set_sample_rate_callback(client, &xdmv_jack_sample_rate, 0);
+    jack_set_port_connect_callback(client, &xdmv_jack_port_connect, 0);
+
+    jack_port_t *l = jack_port_register(client, "xdmv_l",
+            JACK_DEFAULT_AUDIO_TYPE, JackPortIsInput | JackPortIsTerminal,
+            xdmv_sample_rate);
+    jack_port_t *r = jack_port_register(client, "xdmv_r",
+            JACK_DEFAULT_AUDIO_TYPE, JackPortIsInput | JackPortIsTerminal,
+            xdmv_sample_rate);
+    assert(l && r);
+    xdmv_jack.port_l = l;
+    xdmv_jack.port_r = r;
+
+    return 0;
+}
+
+void
+xdmv_fftw_init()
+{
+    xdmv.inl = fftw_malloc(sizeof(*xdmv.inl) * xdmv_sample_rate);
+    xdmv.inr = fftw_malloc(sizeof(*xdmv.inr) * xdmv_sample_rate);
+    xdmv.outl = fftw_malloc(sizeof(*xdmv.outl) * xdmv_sample_rate);
+    xdmv.outr = fftw_malloc(sizeof(*xdmv.outr) * xdmv_sample_rate);
+    xdmv.pl = fftw_plan_dft_r2c_1d(xdmv_sample_rate, xdmv.inl, xdmv.outr, FFTW_MEASURE);
+    xdmv.pr = fftw_plan_dft_r2c_1d(xdmv_sample_rate, xdmv.inl, xdmv.outr, FFTW_MEASURE);
 }
 
 void
@@ -608,9 +676,12 @@ xdmv_load_sources(int argc, char **argv)
         dieif(n < 0, "Could not load music file");
         fclose(f);
         xdmv_source = source_file_wav;
-    } else {
-        xdmv_jack_init();
+    } else if (!xdmv_jack_init()) {
         xdmv_source = source_jack;
+        jack_client_close(xdmv_jack.client);
+        exit(1);
+    } else {
+        die("Could not load any source");
     }
 }
 
@@ -628,6 +699,7 @@ main(int argc, char **argv)
     signal(SIGINT, &sig_handler);
     signal(SIGTERM, &sig_handler);
     xdmv_load_sources(argc,argv);
+    xdmv_fftw_init();
     return xdmv_xorg(argc, argv);
 }
 

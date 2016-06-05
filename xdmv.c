@@ -632,11 +632,6 @@ xdmv_jack_sample_rate(jack_nframes_t nframes, void *arg)
     return 0;
 }
 
-void
-xdmv_jack_port_connect(jack_port_id_t a, jack_port_id_t b, int connect, void *arg)
-{
-}
-
 int
 xdmv_jack_init()
 {
@@ -648,13 +643,12 @@ xdmv_jack_init()
 
     jack_set_process_callback(client, &xdmv_jack_process, 0);
     jack_set_sample_rate_callback(client, &xdmv_jack_sample_rate, 0);
-    jack_set_port_connect_callback(client, &xdmv_jack_port_connect, 0);
 
     jack_port_t *l = jack_port_register(client, "xdmv_l",
-            JACK_DEFAULT_AUDIO_TYPE, JackPortIsInput | JackPortIsTerminal,
+            JACK_DEFAULT_AUDIO_TYPE, JackPortIsInput,
             xdmv_sample_rate);
     jack_port_t *r = jack_port_register(client, "xdmv_r",
-            JACK_DEFAULT_AUDIO_TYPE, JackPortIsInput | JackPortIsTerminal,
+            JACK_DEFAULT_AUDIO_TYPE, JackPortIsInput,
             xdmv_sample_rate);
     assert(l && r);
     xdmv_jack.port_l = l;

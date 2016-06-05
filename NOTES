@@ -29,4 +29,5 @@ TODO Add support for more file types
 TODO Experiment with direct hardware access if Linux allows this
 TODO Add a function for getting audio data from agnostic source
 TODO Make sure screen is cleared properly on exit
+TODO Add some sort of runtime configurabilitiy. Or just parse arguments
 

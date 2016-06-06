@@ -48,7 +48,6 @@
 #define xdmv_smooth_points 3
 
 /* filter settings */
-#define xdmv_monstercat 2.0
 #define xdmv_integral 0.7
 #define xdmv_gravity 1.0
 double xdmv_weight[64] = {0.8, 0.8, 1, 1, 0.8, 0.8, 1, 0.8, 0.8, 1, 1, 0.8, 1, 1,
@@ -308,26 +307,6 @@ filter_freqweight(Spectrum *s)
 }
 
 void
-filter_monstercat(Spectrum *s)
-{
-    /* from cava */
-    float *f = s->f; int bars = s->bars;
-    int y, z, de;
-    for (z = 0; z < bars; z++) {
-        if (f[z] < 0.125)
-            f[z] = 0.125;
-        for (y = z - 1; y >= 0; y--) {
-            de = z - y;
-            f[y] = max(f[z] / pow(xdmv_monstercat, de), f[y]);
-        }
-        for (y = z + 1; y < bars; y++) {
-            de = y - z;
-            f[y] = max(f[z] / pow(xdmv_monstercat, de), f[y]);
-        }
-    }
-}
-
-void
 filter_integral(Spectrum *s)
 {
     /* from cava */
@@ -438,7 +417,6 @@ xdmv_spectrum_create(Display *d, int s, Window w, Pixmap bg, unsigned int t,
         Spectrum *sp)
 {
     separate_freq_bands(sp);
-    filter_monstercat(sp);
     filter_savitskysmooth(sp);
     filter_marginsmooth(sp);
     filter_integral(sp);

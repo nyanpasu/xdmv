@@ -17,17 +17,18 @@ DONE Enable double buffering on the root window, so it should be fine for
 
 TODO Experiment with compositing and hardware acceleration for partial
      transparency and background merging
-TODO Support multiple audio streams, not just file input
+DONE Support multiple audio streams, not just file input
 TODO Consider mpd access
 DONE Find bug with wav playback getting wrong data 50% through a song
 TODO Add preview for README once it looks okay
 TODO Test in environments other than minimal X. Probably won't work well with
      other programs using root.
-TODO Reduce scope of global filter states (make them static vars for the filter
+DONE Reduce scope of global filter states (make them static vars for the filter
      funcs or something)
 TODO Add support for more file types
-TODO Experiment with direct hardware access if Linux allows this
-TODO Add a function for getting audio data from agnostic source
+TODO Experiment with direct sound hardware access if Linux allows this
+DONE Add a function for getting audio data from agnostic source
 TODO Make sure screen is cleared properly on exit
 TODO Add some sort of runtime configurabilitiy. Or just parse arguments
+DONE Pulse support
 

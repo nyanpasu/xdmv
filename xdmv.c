@@ -6,6 +6,7 @@
 #include <assert.h>
 #include <execinfo.h>
 #include <math.h>
+#include <pthread.h>
 #include <signal.h>
 #include <string.h>
 #include <time.h>
@@ -20,6 +21,10 @@
 #include <fftw3.h>
 
 #include <jack/jack.h>
+
+#include <pulse/simple.h>
+#include <pulse/error.h>
+#include <pulse/pulseaudio.h>
 
 /* Config */
 /* TODO replace these with functions that get these values dynamically/from
@@ -144,13 +149,22 @@ struct {
     float bufr[xdmv_sample_rate];
 } xdmv_jack;
 
+struct {
+    pa_simple *s;
+    pthread_t thread;
+    unsigned int pos;
+    int status;
+    /* 2 channels */
+    int16_t buf[xdmv_sample_rate * 2];
+} xdmv_pulse;
+
 typedef struct Spectrum {
     float f[400];
     int bars;
 
     /* filter state */
     int lcf[400], hcf[400];
-    float peak[201];
+    float peak[401];
     float fc[400], fre[400], weight[400], fmem[400], flast[400], fall[400],
           fpeak[400];
 
@@ -186,6 +200,7 @@ struct xdmv {
 enum {
     source_file_wav = 0,
     source_jack,
+    source_pulse,
 } xdmv_source;
 
 /* Program */
@@ -331,7 +346,7 @@ filter_gravity(Spectrum *s)
     float *f = s->f, *fall = s->fall, *fpeak = s->fpeak, *flast = s->flast;
     int bars = s->bars;
     /* static float g = xdmv_gravity * xdmv_height / 270 * pow(60.0 / xdmv_framerate, 2.5); */
-    static float g = xdmv_gravity * pow(60.0 / xdmv_framerate, 2.5);
+    static float g = xdmv_gravity * pow(120.0 / xdmv_framerate, 2.5);
     float temp;
 
     for (int o = 0; o < bars; o++) {
@@ -339,7 +354,7 @@ filter_gravity(Spectrum *s)
 
         if (temp < flast[o]) {
             f[o] = fpeak[o] - (g * fall[o] * fall[o]);
-            fall[o] += 16;
+            fall[o] += 4;
         } else {
             f[o] = temp;
             fpeak[o] = f[o];
@@ -347,6 +362,7 @@ filter_gravity(Spectrum *s)
         }
 
         flast[o] = f[o];
+        f[o] = max(0.0, f[o]);
     }
 }
 
@@ -426,11 +442,8 @@ xdmv_spectrum_create(Display *d, int s, Window w, Pixmap bg, unsigned int t,
     filter_savitskysmooth(sp);
     filter_marginsmooth(sp);
     filter_integral(sp);
-    /* filter_gravity(sp); */
+    filter_gravity(sp);
     filter_freqweight(sp);
-
-    for (int o = 0; o < sp->bars; o++)
-        sp->f[o] = sp->f[o] == 0.0 ? 1.0 : sp->f[o];
 }
 
 float *
@@ -492,6 +505,14 @@ xdmv_render_spectrums(Display *d, int s, Window w, Pixmap bg, unsigned long t, s
             for (size_t i = 0; i < xdmv_sample_rate; i++) {
                 sl->in[i] = xdmv_jack.bufl[(offset + i) % xdmv_sample_rate] * 65536;
                 sr->in[i] = xdmv_jack.bufr[(offset + i) % xdmv_sample_rate] * 65536;
+            }
+            break;
+        case source_pulse:
+            offset = xdmv.sample_rate * t / 1000;
+            const size_t buf_size = xdmv_sample_rate * 2;
+            for (size_t i = 0, j = 0; i < xdmv_sample_rate; i++, j += 2) {
+                sl->in[(offset + i) % xdmv_sample_rate] = xdmv_pulse.buf[(offset + j    ) % buf_size];
+                sr->in[(offset + i) % xdmv_sample_rate] = xdmv_pulse.buf[(offset + j + 1) % buf_size];
             }
             break;
         default:
@@ -698,6 +719,69 @@ xdmv_jack_init()
     return 0;
 }
 
+void *
+xdmv_pulse_process(void *arg)
+{
+    xdmv_pulse.status = 0;
+    pa_simple *s;
+    pa_sample_spec ss;
+    ss.format = PA_SAMPLE_S16NE;
+    ss.channels = 2;
+    ss.rate = 44100;
+    s = pa_simple_new(NULL,   // Use the default server.
+            "xdmv",           // Our application's name.
+            PA_STREAM_RECORD,
+            NULL,             // Use the default device.
+            "bars",           // Description of our stream.
+            &ss,              // Our sample format.
+            NULL,             // Use default channel map
+            NULL,             // Use default buffering attributes.
+            NULL              // Ignore error code.
+            );
+    if (!s) {
+        xdmv_pulse.status = -1;
+        return NULL;
+    }
+
+    xdmv_pulse.s = s;
+    xdmv.sample_rate = ss.rate;
+
+    const size_t buf_size = xdmv_sample_rate * 2;
+    const size_t chunk_size = buf_size / xdmv_framerate;
+    xdmv_pulse.status = 1;
+    for(;;) {
+        size_t offset = xdmv_pulse.pos % buf_size;
+        size_t remaining = buf_size - offset;
+        int16_t *b = xdmv_pulse.buf + offset;
+        if (remaining < chunk_size) {
+            pa_simple_read(xdmv_pulse.s, b, remaining, NULL);
+            pa_simple_read(xdmv_pulse.s, xdmv_pulse.buf, chunk_size - remaining, NULL);
+        } else {
+            pa_simple_read(xdmv_pulse.s, b, chunk_size, NULL);
+        }
+        xdmv_pulse.pos += chunk_size;
+    }
+    return NULL;
+}
+
+int
+xdmv_pulse_init()
+{
+    int n = pthread_create(&xdmv_pulse.thread, NULL, &xdmv_pulse_process, NULL);
+    if (n) {
+        perror("pthread");
+        die("Could not set up pulse input thread");
+    }
+
+    while (!xdmv_pulse.status)
+        xdmv_sleep(100);
+
+    if (xdmv_pulse.status == 1)
+        return 0;
+
+    return xdmv_pulse.status;
+}
+
 void
 xdmv_load_sources(int argc, char **argv)
 {
@@ -712,10 +796,10 @@ xdmv_load_sources(int argc, char **argv)
         dieif(n < 0, "Could not load music file");
         fclose(f);
         xdmv_source = source_file_wav;
+    } else if (!xdmv_pulse_init()) {
+        xdmv_source = source_pulse;
     } else if (!xdmv_jack_init()) {
         xdmv_source = source_jack;
-        /* jack_client_close(xdmv_jack.client); */
-        /* exit(1); */
     } else {
         die("Could not load any source");
     }
@@ -732,15 +816,15 @@ sig_handler(int n)
 void
 sig_segv()
 {
-	void *bt[20];
-	size_t len = backtrace(bt, 20);
+    void *bt[20];
+    size_t len = backtrace(bt, 20);
 
-	backtrace_symbols_fd(bt, len, STDERR_FILENO);
-	exit(1);
+    backtrace_symbols_fd(bt, len, STDERR_FILENO);
+    exit(1);
 }
 
-int
-main(int argc, char **argv)
+void
+xdmv_signal_init(void)
 {
     struct sigaction sa;
     memset(&sa, 0, sizeof(sa));
@@ -749,7 +833,12 @@ main(int argc, char **argv)
     sigaction(SIGINT, &sa, 0);
     sa.sa_handler = sig_segv;
     sigaction(SIGSEGV, &sa, 0);
+}
 
+int
+main(int argc, char **argv)
+{
+    xdmv_signal_init();
     xdmv_load_sources(argc,argv);
     return xdmv_xorg(argc, argv);
 }

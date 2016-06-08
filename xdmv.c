@@ -30,6 +30,7 @@
 /* TODO replace these with functions that get these values dynamically/from
  * files */
 #define xdmv_framerate 60
+/* sample interval */
 #define xdmv_sample_rate 2048
 #define xdmv_height 100
 #define xdmv_width 1080
@@ -40,8 +41,8 @@
 #define xdmv_box_margin 1
 #define xdmv_box_color 0x616568
 
-#define xdmv_lowest_freq 80
-#define xdmv_highest_freq 22000
+#define xdmv_lowest_freq 20
+#define xdmv_highest_freq 20000
 
 #define xdmv_smooth_passes 2
 /* must be odd number */
@@ -130,12 +131,10 @@ struct wav_header_chunk {
     uint32_t size;
 };
 
-struct wav_sample {
+struct sample {
     int16_t l;
     int16_t r;
 } *xdmv_wav_audio;
-
-void *xdmv_wav_data;
 
 struct {
     jack_client_t *client;
@@ -153,8 +152,8 @@ struct {
     pthread_t thread;
     unsigned int pos;
     int status;
-    /* 2 channels */
-    int16_t buf[xdmv_sample_rate * 2];
+    struct sample buf[xdmv_sample_rate + 256];
+
 } xdmv_pulse;
 
 typedef struct Spectrum {
@@ -487,10 +486,9 @@ xdmv_render_spectrums(Display *d, int s, Window w, Pixmap bg, unsigned long t, s
             break;
         case source_pulse:
             offset = xdmv.sample_rate * t / 1000;
-            const size_t buf_size = xdmv_sample_rate * 2;
-            for (size_t i = 0, j = 0; i < xdmv_sample_rate; i++, j += 2) {
-                sl->in[(offset + i) % xdmv_sample_rate] = xdmv_pulse.buf[(offset + j    ) % buf_size];
-                sr->in[(offset + i) % xdmv_sample_rate] = xdmv_pulse.buf[(offset + j + 1) % buf_size];
+            for (size_t i = 0; i < xdmv_sample_rate; i++) {
+                sl->in[i] = xdmv_pulse.buf[(offset + i) % xdmv_sample_rate].l;
+                sr->in[i] = xdmv_pulse.buf[(offset + i) % xdmv_sample_rate].r;
             }
             break;
         default:
@@ -604,8 +602,7 @@ xdmv_xorg(int argc, char **argv)
 }
 
 int
-xdmv_loadwav(FILE *f, struct wav_header *h, void **wav_data,
-             struct wav_sample **wav_audio)
+xdmv_loadwav(FILE *f, struct wav_header *h, struct sample **samples)
 {
     /* I don't care about endianness and do basic validation only */
 
@@ -635,9 +632,8 @@ xdmv_loadwav(FILE *f, struct wav_header *h, void **wav_data,
     xdmv.song_length = sz * 8 / h->bits_per_sample / h->channels / h->sample_rate;
     xdmv.sample_rate = h->sample_rate;
 
-    *wav_data = xmalloc(sz);
-    *wav_audio = *wav_data;
-    if (fread(*wav_data, 1, sz, f) < sz)
+    *samples = xmalloc(sz);
+    if (fread(*samples, 1, sz, f) < sz)
         die("Could not read full file\n");
 
     return sz;
@@ -724,18 +720,17 @@ xdmv_pulse_process(void *arg)
     xdmv_pulse.s = s;
     xdmv.sample_rate = ss.rate;
 
-    const size_t buf_size = xdmv_sample_rate * 2;
-    const size_t chunk_size = buf_size / xdmv_framerate;
+    /* bytes */
+    const size_t chunk_size = xdmv_sample_rate / xdmv_framerate;
     xdmv_pulse.status = 1;
     for(;;) {
-        size_t offset = xdmv_pulse.pos % buf_size;
-        size_t remaining = buf_size - offset;
-        int16_t *b = xdmv_pulse.buf + offset;
-        if (remaining < chunk_size) {
-            pa_simple_read(xdmv_pulse.s, b, remaining, NULL);
-            pa_simple_read(xdmv_pulse.s, xdmv_pulse.buf, chunk_size - remaining, NULL);
-        } else {
-            pa_simple_read(xdmv_pulse.s, b, chunk_size, NULL);
+        size_t offset = xdmv_pulse.pos % xdmv_sample_rate;
+        int16_t *b = (int16_t *)(xdmv_pulse.buf + offset);
+        int errnum;
+        int err = pa_simple_read(xdmv_pulse.s, b, chunk_size * 4, &errnum);
+        if (err < 0) {
+            eprintf("pa_simple_read: %d\n", errnum);
+            die("");
         }
         xdmv_pulse.pos += chunk_size;
     }
@@ -770,7 +765,7 @@ xdmv_load_sources(int argc, char **argv)
 
         /* TODO support for more formats for testing */
         /* wav is easiest */
-        int n = xdmv_loadwav(f, &xdmv_wav_header, &xdmv_wav_data, &xdmv_wav_audio);
+        int n = xdmv_loadwav(f, &xdmv_wav_header, &xdmv_wav_audio);
         dieif(n < 0, "Could not load music file");
         fclose(f);
         xdmv_source = source_file_wav;

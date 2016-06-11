@@ -32,7 +32,7 @@
 #define xdmv_framerate 60
 /* sample interval */
 #define xdmv_sample_rate 2048
-#define xdmv_height 100
+#define xdmv_height 50
 #define xdmv_width 1080
 #define xdmv_offset_top 20
 #define xdmv_offset_bot (-1)
@@ -51,7 +51,7 @@
 /* filter settings */
 #define xdmv_integral 0.7
 #define xdmv_gravity 1.0
-double xdmv_weight[64] = {0.8, 0.8, 1, 1, 0.8, 0.8, 1, 0.8, 0.8, 1, 1, 0.8, 1, 1,
+double xdmv_weight[64] = {2.4, 2.0, 1.8, 1, 0.8, 0.8, 1, 0.8, 0.8, 1, 1, 0.8, 1, 1,
     0.8, 0.6, 0.6, 0.7, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8,
     0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8,
     0.8, 0.7, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6,
@@ -400,13 +400,17 @@ xdmv_spectrum_calculate(Spectrum *s)
                 lcf[n] = lcf[n - 1] + 1;
             hcf[n - 1] = lcf[n] - 1;
         }
-        /* if (n != 0) */
-        /*     printf("%d: %f -> %f (%d -> %d) \n", n, fc[n - 1], fc[n], lcf[n - 1], hcf[n - 1]); */
     }
 
     for (int n = 0; n < bars; n++) {
+        /* weight[n] = pow(fc[n], 0.75) / xdmv_sample_rate / 2000 * xdmv_height; */
+        weight[n] = (double)1 / xdmv_sample_rate * xdmv_height / 4;
+
         int offset = sizeof(xdmv_weight) / sizeof(*xdmv_weight) * n / bars;
-        weight[n] = pow(fc[n], 0.75) * ((double)xdmv_height / xdmv_sample_rate / 4000) * xdmv_weight[offset];
+        if (n != 0)
+            printf("%d: %f -> %f (%d -> %d) [%fx]\n", n, fc[n - 1], fc[n], lcf[n - 1], hcf[n - 1], weight[n - 1]);
+
+        /* weight[n] *= xdmv_weight[offset]; */
     }
 
 }
@@ -417,9 +421,9 @@ xdmv_spectrum_create(Display *d, int s, Window w, Pixmap bg, unsigned int t,
 {
     separate_freq_bands(sp);
     filter_savitskysmooth(sp);
-    filter_marginsmooth(sp);
+    /* filter_marginsmooth(sp); */
     filter_integral(sp);
-    filter_gravity(sp);
+    /* filter_gravity(sp); */
     filter_freqweight(sp);
 }
 

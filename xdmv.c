@@ -404,7 +404,7 @@ xdmv_spectrum_calculate(Spectrum *s)
 
     for (int n = 0; n < bars; n++) {
         /* weight[n] = pow(fc[n], 0.75) / xdmv_sample_rate / 2000 * xdmv_height; */
-        weight[n] = (double)1 / xdmv_sample_rate * xdmv_height / 4;
+        weight[n] = (double)1 / xdmv_sample_rate * log10(fc[n]) / 8 * xdmv_height;
 
         int offset = sizeof(xdmv_weight) / sizeof(*xdmv_weight) * n / bars;
         if (n != 0)

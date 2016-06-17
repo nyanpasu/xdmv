@@ -233,6 +233,8 @@ xdmv_set_prop(Display *d, Window w, const char *prop, const char *atom)
     Atom xa = XInternAtom(d, prop, False);
     Atom xa_prop = XInternAtom(d, atom, False);
     XChangeProperty(d, w, xa, XA_ATOM, 32, PropModeAppend, (unsigned char *) &xa_prop, 1);
+
+    return 0;
 }
 
 void
@@ -323,8 +325,8 @@ filter_gravity(Spectrum *s)
     /* from cava */
     float *f = s->f, *fall = s->fall, *fpeak = s->fpeak, *flast = s->flast;
     int bars = s->bars;
-    /* static float g = xdmv_gravity * xdmv_height / 270 * pow(60.0 / xdmv_framerate, 2.5); */
-    static float g = xdmv_gravity * pow(120.0 / xdmv_framerate, 2.5);
+    /* float g = xdmv_gravity * xdmv_height / 270 * pow(60.0 / xdmv_framerate, 2.5); */
+    float g = xdmv_gravity * pow(120.0 / xdmv_framerate, 2.5);
     float temp;
 
     for (int o = 0; o < bars; o++) {
@@ -354,7 +356,6 @@ separate_freq_bands(Spectrum *s)
     int bars = s->bars;
     int o,i;
     float *f = s->f, *peak = s->peak;
-    float temp;
 
     // process: separate frequency bands
     for (o = 0; o < bars; o++) {
@@ -406,7 +407,7 @@ xdmv_spectrum_calculate(Spectrum *s)
         /* weight[n] = pow(fc[n], 0.75) / xdmv_sample_rate / 2000 * xdmv_height; */
         weight[n] = (double)1 / xdmv_sample_rate * log10(fc[n]) * ((double)n / bars + 1) / 20 * xdmv_height;
 
-        int offset = sizeof(xdmv_weight) / sizeof(*xdmv_weight) * n / bars;
+        /* int offset = sizeof(xdmv_weight) / sizeof(*xdmv_weight) * n / bars; */
         if (n != 0)
             printf("%d: %f -> %f (%d -> %d) [%fx]\n", n, fc[n - 1], fc[n], lcf[n - 1], hcf[n - 1], weight[n - 1]);
 
@@ -427,7 +428,7 @@ xdmv_spectrum_create(Display *d, int s, Window w, Pixmap bg, unsigned int t,
     filter_freqweight(sp);
 }
 
-float *
+void
 xdmv_render_spectrum_top(Display *d, int s, Window w, Pixmap bg,
         unsigned int t, Spectrum *sp, int offx, int offy, int width)
 {
@@ -445,7 +446,7 @@ xdmv_render_spectrum_top(Display *d, int s, Window w, Pixmap bg,
     XFlush(d);
 }
 
-float *
+void
 xdmv_render_spectrum_bot(Display *d, int s, Window w, Pixmap bg,
         unsigned int t, Spectrum *sp, int offx, int offy, int width, int height)
 {
@@ -554,7 +555,7 @@ xdmv_xorg(int argc, char **argv)
             XRRCrtcInfo *crtc = (*ol)->crtc;
             Spectrum *sl = &(*ol)->spectruml;
             Spectrum *sr = &(*ol)->spectrumr;
-            int width = crtc->width, height = crtc->height, offx = crtc->x, offy = crtc->y;
+            int width = crtc->width;
             int bars = (width - xdmv_padding_x * 2) / (xdmv_box_size + xdmv_box_margin);
             sl->bars = sr->bars = bars;
             xdmv_spectrum_calculate(sl);

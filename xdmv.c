@@ -32,7 +32,7 @@
 #define xdmv_framerate 60
 /* sample interval */
 #define xdmv_sample_rate 2048
-#define xdmv_height 50
+#define xdmv_height 100
 #define xdmv_width 1080
 #define xdmv_offset_top 20
 #define xdmv_offset_bot (-1)
@@ -404,7 +404,7 @@ xdmv_spectrum_calculate(Spectrum *s)
 
     for (int n = 0; n < bars; n++) {
         /* weight[n] = pow(fc[n], 0.75) / xdmv_sample_rate / 2000 * xdmv_height; */
-        weight[n] = (double)1 / xdmv_sample_rate * log10(fc[n]) / 8 * xdmv_height;
+        weight[n] = (double)1 / xdmv_sample_rate * log10(fc[n]) * ((double)n / bars + 1) / 20 * xdmv_height;
 
         int offset = sizeof(xdmv_weight) / sizeof(*xdmv_weight) * n / bars;
         if (n != 0)
